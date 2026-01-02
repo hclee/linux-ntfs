@@ -190,6 +190,7 @@ err_out:
 
 		/* Catch multi sector transfer fixup errors. */
 		if (!ntfs_mft_record_check(vol, (struct mft_record *)ni->mrec, ni->mft_no)) {
+			kunmap(page);
 			ni->page = page;
 			ni->page_ofs = ofs;
 			return ni->mrec;
@@ -315,6 +316,7 @@ void unmap_mft_record(struct ntfs_inode *ni)
 	if (atomic_dec_return(&ni->count) > 1)
 		return;
 	WARN_ON(!folio);
+	folio_put(folio);
 #else
 	struct page *page;
 
@@ -327,6 +329,7 @@ void unmap_mft_record(struct ntfs_inode *ni)
 	if (atomic_dec_return(&ni->count) > 1)
 		return;
 	WARN_ON(!page);
+	put_page(page);
 #endif
 }
 
