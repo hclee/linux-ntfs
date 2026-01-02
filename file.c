@@ -900,7 +900,7 @@ static int ntfs_ioctl_get_volume_label(struct file *filp, unsigned long arg)
 		if (copy_to_user(buf, "", 1))
 			return -EFAULT;
 	} else if (copy_to_user(buf, vol->volume_label,
-				MIN(FSLABEL_MAX, strlen(vol->volume_label) + 1)))
+				min_t(int, FSLABEL_MAX, strlen(vol->volume_label) + 1)))
 		return -EFAULT;
 	return 0;
 }
