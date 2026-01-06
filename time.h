@@ -11,7 +11,7 @@
 #include <linux/time.h>
 #include <asm/div64.h>		/* For do_div(). */
 
-#define NTFS_TIME_OFFSET ((s64)(369 * 365 + 89) * 24 * 3600 * 10000000)
+#define NTFS_TIME_OFFSET ((s64)(369 * 365 + 89) * 24 * 3600)
 
 /**
  * utc2ntfs - convert Linux UTC time to NTFS time
@@ -35,8 +35,8 @@ static inline __le64 utc2ntfs(const struct timespec64 ts)
 	 * Convert the seconds to 100ns intervals, add the nano-seconds
 	 * converted to 100ns intervals, and then add the NTFS time offset.
 	 */
-	return cpu_to_le64((s64)ts.tv_sec * 10000000 + ts.tv_nsec / 100 +
-			NTFS_TIME_OFFSET);
+	return cpu_to_le64((u64)(ts.tv_sec + NTFS_TIME_OFFSET) * 10000000 +
+			ts.tv_nsec / 100);
 }
 
 /**
@@ -72,16 +72,16 @@ static inline __le64 get_current_ntfs_time(void)
 static inline struct timespec64 ntfs2utc(const __le64 time)
 {
 	struct timespec64 ts;
+	s32 t32;
 
 	/* Subtract the NTFS time offset. */
-	u64 t = (u64)(le64_to_cpu(time) - NTFS_TIME_OFFSET);
+	s64 t = le64_to_cpu(time) - NTFS_TIME_OFFSET * 10000000;
 	/*
 	 * Convert the time to 1-second intervals and the remainder to
 	 * 1-nano-second intervals.
 	 */
-	ts.tv_nsec = do_div(t, 10000000) * 100;
-	ts.tv_sec = t;
+	ts.tv_sec = div_s64_rem(t, 10000000, &t32);
+	ts.tv_nsec = t32 * 100;
 	return ts;
 }
-
 #endif /* _LINUX_NTFS_TIME_H */
