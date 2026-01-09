@@ -18,18 +18,13 @@
 #include "debug.h"
 #include "iomap.h"
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-static s64 ntfs_convert_folio_index_into_lcn(struct ntfs_volume *vol, struct ntfs_inode *ni,
-		unsigned long folio_index)
-#else
-static s64 ntfs_convert_page_index_into_lcn(struct ntfs_volume *vol, struct ntfs_inode *ni,
-		unsigned long folio_index)
-#endif
+static s64 lcn_from_index(struct ntfs_volume *vol, struct ntfs_inode *ni,
+		unsigned long index)
 {
 	s64 vcn;
 	s64 lcn;
 
-	vcn = NTFS_PIDX_TO_CLU(vol, folio_index);
+	vcn = NTFS_PIDX_TO_CLU(vol, index);
 
 	down_read(&ni->runlist.lock);
 	lcn = ntfs_attr_vcn_to_lcn_nolock(ni, vcn, false);
@@ -181,7 +176,7 @@ static int ntfs_write_mft_block(struct ntfs_inode *ni, struct folio *folio,
 	ntfs_debug("Entering for inode 0x%lx, attribute type 0x%x, folio index 0x%lx.",
 			vi->i_ino, ni->type, folio->index);
 
-	lcn = ntfs_convert_folio_index_into_lcn(vol, ni, folio->index);
+	lcn = lcn_from_index(vol, ni, folio->index);
 	if (lcn <= LCN_HOLE) {
 		folio_start_writeback(folio);
 		folio_unlock(folio);
@@ -376,7 +371,7 @@ static int ntfs_write_mft_block(struct ntfs_inode *ni, struct page *page,
 	BUG_ON(!((S_ISREG(vi->i_mode) && !vi->i_ino) || S_ISDIR(vi->i_mode) ||
 		(NInoAttr(ni) && ni->type == AT_INDEX_ALLOCATION)));
 
-	lcn = ntfs_convert_page_index_into_lcn(vol, ni, page->index);
+	lcn = lcn_from_index(vol, ni, page->index);
 	if (lcn <= LCN_HOLE) {
 		set_page_writeback(page);
 		unlock_page(page);
