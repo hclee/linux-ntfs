@@ -201,5 +201,4 @@ static inline int ntfs_ffs(int x)
 		r += 1;
 	return r;
 }
-
 #endif /* _LINUX_NTFS_H */

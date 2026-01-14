@@ -4494,6 +4494,7 @@ attr_resize_again:
 		ntfs_error(sb, "%s: Failed to get search context", __func__);
 		return -ENOMEM;
 	}
+
 	err = ntfs_attr_lookup(attr_ni->type, attr_ni->name, attr_ni->name_len,
 			0, 0, NULL, 0, ctx);
 	if (err) {
