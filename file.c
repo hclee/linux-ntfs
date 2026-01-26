@@ -568,6 +568,69 @@ static const struct iomap_dio_ops ntfs_write_dio_ops = {
 	.end_io			= ntfs_file_write_dio_end_io,
 };
 
+static ssize_t ntfs_dio_write_iter(struct kiocb *iocb, struct iov_iter *from)
+{
+	ssize_t ret;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	ret = iomap_dio_rw(iocb, from, &ntfs_dio_iomap_ops,
+			&ntfs_write_dio_ops, 0, NULL, 0);
+#else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0)
+	ret = iomap_dio_rw(iocb, from, &ntfs_dio_iomap_ops,
+			&ntfs_write_dio_ops, 0, 0);
+#else
+	ret = iomap_dio_rw(iocb, from, &ntfs_dio_iomap_ops,
+			&ntfs_write_dio_ops);
+#endif
+#endif
+	if (ret == -ENOTBLK)
+		ret = 0;
+	else if (ret < 0)
+		goto out;
+
+	if (iov_iter_count(from)) {
+		loff_t offset, end;
+		ssize_t written;
+		int ret2;
+
+		offset = iocb->ki_pos;
+		iocb->ki_flags &= ~IOCB_DIRECT;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+		written = iomap_file_buffered_write(iocb, from,
+				&ntfs_write_iomap_ops, &ntfs_iomap_folio_ops,
+				NULL);
+#else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+		written = iomap_file_buffered_write(iocb, from,
+				&ntfs_write_iomap_ops, NULL);
+#else
+		written = iomap_file_buffered_write(iocb, from, &ntfs_write_iomap_ops);
+#endif
+#endif
+		if (written < 0) {
+			ret = written;
+			goto out;
+		}
+
+		ret += written;
+		end = iocb->ki_pos + written - 1;
+		ret2 = filemap_write_and_wait_range(iocb->ki_filp->f_mapping,
+				offset, end);
+		if (ret2) {
+			ret = -EIO;
+			goto out;
+		}
+		if (!ret2)
+			invalidate_mapping_pages(iocb->ki_filp->f_mapping,
+						 offset >> PAGE_SHIFT,
+						 end >> PAGE_SHIFT);
+	}
+
+out:
+	return ret;
+}
+
 static ssize_t ntfs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
 	struct file *file = iocb->ki_filp;
@@ -625,57 +688,7 @@ static ssize_t ntfs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	}
 
 	if (NInoNonResident(ni) && iocb->ki_flags & IOCB_DIRECT) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-		ret = iomap_dio_rw(iocb, from, &ntfs_dio_iomap_ops,
-				   &ntfs_write_dio_ops, 0, NULL, 0);
-#else
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0)
-		ret = iomap_dio_rw(iocb, from, &ntfs_dio_iomap_ops,
-				   &ntfs_write_dio_ops, 0, 0);
-#else
-		ret = iomap_dio_rw(iocb, from, &ntfs_dio_iomap_ops,
-				   &ntfs_write_dio_ops);
-#endif
-#endif
-		if (ret == -ENOTBLK)
-			ret = 0;
-		else if (ret < 0)
-			goto out;
-
-		if (iov_iter_count(from)) {
-			loff_t offset, end;
-			ssize_t written;
-			int ret2;
-
-			offset = iocb->ki_pos;
-			iocb->ki_flags &= ~IOCB_DIRECT;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
-			written = iomap_file_buffered_write(iocb, from,
-					&ntfs_write_iomap_ops, &ntfs_iomap_folio_ops,
-					NULL);
-#else
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
-			written = iomap_file_buffered_write(iocb, from, &ntfs_write_iomap_ops, NULL);
-#else
-			written = iomap_file_buffered_write(iocb, from, &ntfs_write_iomap_ops);
-#endif
-#endif
-			if (written < 0) {
-				err = written;
-				goto out;
-			}
-
-			ret += written;
-			end = iocb->ki_pos + written - 1;
-			ret2 = filemap_write_and_wait_range(iocb->ki_filp->f_mapping,
-							    offset, end);
-			if (ret2)
-				goto out_err;
-			if (!ret2)
-				invalidate_mapping_pages(iocb->ki_filp->f_mapping,
-							 offset >> PAGE_SHIFT,
-							 end >> PAGE_SHIFT);
-		}
+		ret = ntfs_dio_write_iter(iocb, from);
 	} else {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
 		ret = iomap_file_buffered_write(iocb, from, &ntfs_write_iomap_ops,
@@ -694,7 +707,6 @@ static ssize_t ntfs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	}
 out:
 	if (ret < 0 && ret != -EIOCBQUEUED) {
-out_err:
 		if (ni->initialized_size != old_init_size) {
 			mutex_lock(&ni->mrec_lock);
 			ntfs_attr_set_initialized_size(ni, old_init_size);
