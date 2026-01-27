@@ -31,58 +31,102 @@
 
 /*
  * BIOS parameter block (bpb) structure.
+ *
+ * @bytes_per_sector:       Size of a sector in bytes (usually 512).
+ *                          Matches the logical sector size of the underlying device.
+ * @sectors_per_cluster:    Size of a cluster in sectors (NTFS cluster size / sector size).
+ * @reserved_sectors:       Number of reserved sectors at the beginning of the volume.
+ *                          Always set to 0 in NTFS.
+ * @fats:                   Number of FAT tables.
+ *                          Always 0 in NTFS (no FAT tables exist).
+ * @root_entries:           Number of entries in the root directory.
+ *                          Always 0 in NTFS.
+ * @sectors:                Total number of sectors on the volume.
+ *                          Always 0 in NTFS (use @large_sectors instead).
+ * @media_type:             Media descriptor byte.
+ *                          0xF8 for hard disk (fixed media) in NTFS.
+ * @sectors_per_fat:        Number of sectors per FAT table.
+ *                          Always 0 in NTFS.
+ * @sectors_per_track:      Number of sectors per track.
+ *                          Irrelevant for NTFS.
+ * @heads:                  Number of heads (CHS geometry).
+ *                          Irrelevant for NTFS.
+ * @hidden_sectors:         Number of hidden sectors before the start of the partition.
+ *                          Always 0 in NTFS boot sector.
+ * @large_sectors:          Total number of sectors on the volume.
  */
 struct bios_parameter_block {
-	__le16 bytes_per_sector;	/* Size of a sector in bytes. */
-	u8  sectors_per_cluster;	/* Size of a cluster in sectors. */
-	__le16 reserved_sectors;	/* zero */
-	u8  fats;			/* zero */
-	__le16 root_entries;		/* zero */
-	__le16 sectors;			/* zero */
-	u8  media_type;			/* 0xf8 = hard disk */
-	__le16 sectors_per_fat;		/* zero */
-	__le16 sectors_per_track;		/* irrelevant */
-	__le16 heads;			/* irrelevant */
-	__le32 hidden_sectors;		/* zero */
-	__le32 large_sectors;		/* zero */
+	__le16 bytes_per_sector;
+	u8 sectors_per_cluster;
+	__le16 reserved_sectors;
+	u8 fats;
+	__le16 root_entries;
+	__le16 sectors;
+	u8 media_type;
+	__le16 sectors_per_fat;
+	__le16 sectors_per_track;
+	__le16 heads;
+	__le32 hidden_sectors;
+	__le32 large_sectors;
 } __packed;
 
 /*
  * NTFS boot sector structure.
+ *
+ * @jump:               3-byte jump instruction to boot code (irrelevant for NTFS).
+ *                      Typically 0xEB 0x52 0x90 or similar.
+ * @oem_id:             OEM identifier string (8 bytes).
+ *                      Always "NTFS    " (with trailing spaces) in NTFS volumes.
+ * @bpb:                Legacy BIOS Parameter Block (see struct bios_parameter_block).
+ *                      Mostly zeroed or set to fixed values for NTFS compatibility.
+ * @unused:             4 bytes, reserved/unused.
+ *                      NTFS disk editors show it as:
+ *                        - physical_drive (0x80 for fixed disk)
+ *                        - current_head (0)
+ *                        - extended_boot_signature (0x80 or 0x28)
+ *                        - unused (0)
+ *                      Always zero in practice for NTFS.
+ * @number_of_sectors:  Number of sectors in volume. Gives maximum volume
+ *                      size of 2^63 sectors. Assuming standard sector
+ *                      size of 512 bytes, the maximum byte size is
+ *                      approx. 4.7x10^21 bytes. (-;
+ * @mft_lcn:            Logical cluster number (LCN) of the $MFT data attribute.
+ *                      Location of the Master File Table.
+ * @mftmirr_lcn:        LCN of the $MFTMirr (first 3-4 MFT records copy).
+ *                      Mirror for boot-time recovery.
+ * @clusters_per_mft_record:
+ *                      Size of each MFT record in clusters.
+ * @reserved0:          3 bytes, reserved/zero.
+ * @clusters_per_index_record:
+ *                      Size of each index block/record in clusters.
+ * @reserved1:          3 bytes, reserved/zero.
+ * @volume_serial_number:
+ *                      64-bit volume serial number.
+ *                      Used for identification (irrelevant for NTFS operation).
+ * @checksum:           32-bit checksum of the boot sector (excluding this field).
+ *                      Used to detect boot sector corruption.
+ * @bootstrap:          426 bytes of bootstrap code.
+ *                      Irrelevant for NTFS (contains x86 boot loader stub).
+ * @end_of_sector_marker:
+ *                      2-byte end-of-sector signature.
+ *                      Always 0xAA55 (little-endian magic number).
  */
 struct ntfs_boot_sector {
-	u8  jump[3];			/* Irrelevant (jump to boot up code).*/
-	__le64 oem_id;			/* Magic "NTFS    ". */
-	struct bios_parameter_block bpb;	/* See BIOS_PARAMETER_BLOCK. */
-	u8  unused[4];			/*
-					 * zero, NTFS diskedit.exe states that
-					 * this is actually:
-					 *	__u8 physical_drive;	// 0x80
-					 *	__u8 current_head;	// zero
-					 *	__u8 extended_boot_signature;
-					 *				// 0x80
-					 *	__u8 unused;		// zero
-					 */
-	__le64 number_of_sectors;	/*
-					 * Number of sectors in volume. Gives
-					 * maximum volume size of 2^63 sectors.
-					 * Assuming standard sector size of 512
-					 * bytes, the maximum byte size is
-					 * approx. 4.7x10^21 bytes. (-;
-					 */
-	__le64 mft_lcn;			/* Cluster location of mft data. */
-	__le64 mftmirr_lcn;		/* Cluster location of copy of mft. */
-	s8  clusters_per_mft_record;	/* Mft record size in clusters. */
-	u8  reserved0[3];		/* zero */
-	s8  clusters_per_index_record;	/* Index block size in clusters. */
-	u8  reserved1[3];		/* zero */
-	__le64 volume_serial_number;	/* Irrelevant (serial number). */
-	__le32 checksum;			/* Boot sector checksum. */
-	u8  bootstrap[426];		/* Irrelevant (boot up code). */
-	__le16 end_of_sector_marker;	/*
-					 * End of bootsector magic. Always is
-					 * 0xaa55 in little endian.
-					 */
+	u8 jump[3];
+	__le64 oem_id;
+	struct bios_parameter_block bpb;
+	u8 unused[4];
+	__le64 number_of_sectors;
+	__le64 mft_lcn;
+	__le64 mftmirr_lcn;
+	s8 clusters_per_mft_record;
+	u8 reserved0[3];
+	s8 clusters_per_index_record;
+	u8 reserved1[3];
+	__le64 volume_serial_number;
+	__le32 checksum;
+	u8 bootstrap[426];
+	__le16 end_of_sector_marker;
 } __packed;
 
 static_assert(sizeof(struct ntfs_boot_sector) == 512);
@@ -90,30 +134,35 @@ static_assert(sizeof(struct ntfs_boot_sector) == 512);
 /*
  * Magic identifiers present at the beginning of all ntfs record containing
  * records (like mft records for example).
+ *
+ * magic_FILE:      MFT entry header ("FILE" in ASCII).
+ *                  Used in $MFT/$DATA for all master file table records.
+ * magic_INDX:      Index buffer header ("INDX" in ASCII).
+ *                  Used in $INDEX_ALLOCATION attributes (directories, $I30 indexes).
+ * magic_HOLE:      Hole marker ("HOLE" in ASCII).
+ *                  Introduced in NTFS 3.0+, used for sparse/hole regions in some contexts.
+ * magic_RSTR:      Restart page header ("RSTR" in ASCII).
+ *                  Used in $LogFile for restart pages (transaction log recovery).
+ * magic_RCRD:      Log record page header ("RCRD" in ASCII).
+ *                  Used in $LogFile for individual log record pages.
+ * magic_CHKD:      Chkdsk modified marker ("CHKD" in ASCII).
+ *                  Set by chkdsk when it modifies a record; indicates repair was done.
+ * magic_BAAD:      Bad record marker ("BAAD" in ASCII).
+ *                  Indicates a multi-sector transfer failure was detected.
+ *                  The record is corrupted/unusable; often set during I/O errors.
+ * magic_empty:     Empty/uninitialized page marker (0xffffffff).
+ *                  Used in $LogFile when a page is filled with 0xff bytes
+ *                  and has not yet been initialized. Must be formatted before use.
  */
 enum {
-	/* Found in $MFT/$DATA. */
-	magic_FILE = cpu_to_le32(0x454c4946), /* Mft entry. */
-	magic_INDX = cpu_to_le32(0x58444e49), /* Index buffer. */
-	magic_HOLE = cpu_to_le32(0x454c4f48), /* ? (NTFS 3.0+?) */
-
-	/* Found in LogFile/DATA. */
-	magic_RSTR = cpu_to_le32(0x52545352), /* Restart page. */
-	magic_RCRD = cpu_to_le32(0x44524352), /* Log record page. */
-
-	/* Found in LogFile/DATA.  (May be found in $MFT/$DATA, also?) */
-	magic_CHKD = cpu_to_le32(0x444b4843), /* Modified by chkdsk. */
-
-	/* Found in all ntfs record containing records. */
-	magic_BAAD = cpu_to_le32(0x44414142), /*
-					       * Failed multi sector
-					       * transfer was detected.
-					       */
-	/*
-	 * Found in LogFile/DATA when a page is full of 0xff bytes and is
-	 * thus not initialized.  Page must be initialized before using it.
-	 */
-	magic_empty = cpu_to_le32(0xffffffff) /* Record is empty. */
+	magic_FILE = cpu_to_le32(0x454c4946),
+	magic_INDX = cpu_to_le32(0x58444e49),
+	magic_HOLE = cpu_to_le32(0x454c4f48),
+	magic_RSTR = cpu_to_le32(0x52545352),
+	magic_RCRD = cpu_to_le32(0x44524352),
+	magic_CHKD = cpu_to_le32(0x444b4843),
+	magic_BAAD = cpu_to_le32(0x44414142),
+	magic_empty = cpu_to_le32(0xffffffff)
 };
 
 /*
@@ -160,6 +209,24 @@ static inline bool __ntfs_is_magicp(__le32 *p, __le32 r)
 #define ntfs_is_empty_recordp(p)	(ntfs_is_magicp(p, empty))
 
 /*
+ * struct ntfs_record - Common header for all multi-sector protected NTFS records
+ *
+ * @magic:      4-byte magic identifier for the record type and/or status.
+ *              Common values are defined in the magic_* enum (FILE, INDX, RSTR,
+ *              RCRD, CHKD, BAAD, HOLE, empty).
+ *              - "FILE" = MFT record
+ *              - "INDX" = Index allocation block
+ *              - "BAAD" = Record corrupted (multi-sector fixup failed)
+ *              - 0xffffffff = Uninitialized/empty page
+ * @usa_ofs:    Offset (in bytes) from the start of this record to the Update
+ *              Sequence Array (USA).
+ *              The USA is located at record + usa_ofs.
+ * @usa_count:  Number of 16-bit entries in the USA array (including the Update
+ *              Sequence Number itself).
+ *              - Number of fixup locations = usa_count - 1
+ *              - Each fixup location is a 16-bit value in the record that needs
+ *                protection against torn writes.
+ *
  * The Update Sequence Array (usa) is an array of the __le16 values which belong
  * to the end of each sector protected by the update sequence record in which
  * this array is contained. Note that the first entry is the Update Sequence
@@ -176,20 +243,9 @@ static inline bool __ntfs_is_magicp(__le32 *p, __le32 r)
  * (usa_count * 2) has to be less than or equal to 510.
  */
 struct ntfs_record {
-	__le32 magic;		/*
-				 * A four-byte magic identifying the record
-				 * type and/or status.
-				 */
-	__le16 usa_ofs;		/*
-				 * Offset to the Update Sequence Array (usa)
-				 * from the start of the ntfs record.
-				 */
-	__le16 usa_count;	/*
-				 * Number of __le16 sized entries in the usa
-				 * including the Update Sequence Number (usn),
-				 * thus the number of fixups is the usa_count
-				 * minus 1.
-				 */
+	__le32 magic;
+	__le16 usa_ofs;
+	__le16 usa_count;
 } __packed;
 
 /*
@@ -198,70 +254,83 @@ struct ntfs_record {
  * allocation for random other mft records. Also, the sequence number for each
  * of the system files is always equal to their mft record number and it is
  * never modified.
+ *
+ * FILE_MFT:        Master File Table (MFT) itself.
+ *                  Data attribute contains all MFT entries;
+ *                  Bitmap attribute tracks which records are in use (bit==1).
+ * FILE_MFTMirr:    MFT mirror: copy of the first four (or more) MFT records
+ *                  in its data attribute.
+ *                  If cluster size > 4 KiB, copies first N records where
+ *                  N = cluster_size / mft_record_size.
+ * FILE_LogFile:    Journaling log ($LogFile) in data attribute.
+ *                  Used for transaction logging and recovery.
+ * FILE_Volume:     Volume information and name.
+ *                  Contains $VolumeName (label) and $VolumeInformation
+ *                  (flags, NTFS version). Windows calls this the volume DASD.
+ * FILE_AttrDef:    Attribute definitions array in data attribute.
+ *                  Defines all possible attribute types and their properties.
+ * FILE_root:       Root directory ($Root).
+ *                  The top-level directory of the filesystem.
+ * FILE_Bitmap:     Cluster allocation bitmap ($Bitmap) in data attribute.
+ *                  Tracks free/used clusters (LCNs) on the volume.
+ * FILE_Boot:       Boot sector ($Boot) in data attribute.
+ *                  Always located at cluster 0; contains BPB and NTFS parameters.
+ * FILE_BadClus:    Bad cluster list ($BadClus) in non-resident data attribute.
+ *                  Marks all known bad clusters.
+ * FILE_Secure:     Security descriptors ($Secure).
+ *                  Contains shared $SDS (security descriptors) and two indexes
+ *                  ($SDH, $SII). Introduced in Windows 2000.
+ *                  Before that, it was called $Quota but was unused.
+ * FILE_UpCase:     Uppercase table ($UpCase) in data attribute.
+ *                  Maps all 65536 Unicode characters to their uppercase forms.
+ * FILE_Extend:     System directory ($Extend).
+ *                  Contains additional system files ($ObjId, $Quota, $Reparse,
+ *                  $UsnJrnl, etc.). Introduced in NTFS 3.0 (Windows 2000).
+ * FILE_reserved12: Reserved for future use (MFT records 12–15).
+ * FILE_reserved13: Reserved.
+ * FILE_reserved14: Reserved.
+ * FILE_reserved15: Reserved.
+ * FILE_first_user: First possible user-created file MFT record number.
+ *                  Used as a boundary to distinguish system files from user files.
  */
 enum {
-	FILE_MFT       = 0,	/*
-				 * Master file table (mft). Data attribute
-				 * contains the entries and bitmap attribute
-				 * records which ones are in use (bit==1).
-				 */
-	FILE_MFTMirr   = 1,	/* Mft mirror: copy of first four mft records
-				 * in data attribute. If cluster size > 4kiB,
-				 * copy of first N mft records, with
-				 *     N = cluster_size / mft_record_size.
-				 */
-	FILE_LogFile   = 2,	/* Journalling log in data attribute. */
-	FILE_Volume    = 3,	/*
-				 * Volume name attribute and volume information
-				 * attribute (flags and ntfs version). Windows
-				 * refers to this file as volume DASD (Direct
-				 * Access Storage Device).
-				 */
-	FILE_AttrDef   = 4,	/*
-				 * Array of attribute definitions in data
-				 * attribute.
-				 */
-	FILE_root      = 5,	/* Root directory. */
-	FILE_Bitmap    = 6,	/*
-				 * Allocation bitmap of all clusters (lcns) in
-				 * data attribute.
-				 */
-	FILE_Boot      = 7,	/*
-				 * Boot sector (always at cluster 0) in data
-				 * attribute.
-				 */
-	FILE_BadClus   = 8,	/*
-				 * Contains all bad clusters in the non-resident
-				 * data attribute.
-				 */
-	FILE_Secure    = 9,	/*
-				 * Shared security descriptors in data attribute
-				 * and two indexes into the descriptors.
-				 * Appeared in Windows 2000. Before that, this
-				 * file was named $Quota but was unused.
-				 */
-	FILE_UpCase    = 10,	/*
-				 * Uppercase equivalents of all 65536 Unicode
-				 * characters in data attribute.
-				 */
-	FILE_Extend    = 11,	/*
-				 * Directory containing other system files (eg.
-				 * $ObjId, $Quota, $Reparse and $UsnJrnl). This
-				 * is new to NTFS3.0.
-				 */
-	FILE_reserved12 = 12,	/* Reserved for future use (records 12-15). */
+	FILE_MFT       = 0,
+	FILE_MFTMirr   = 1,
+	FILE_LogFile   = 2,
+	FILE_Volume    = 3,
+	FILE_AttrDef   = 4,
+	FILE_root      = 5,
+	FILE_Bitmap    = 6,
+	FILE_Boot      = 7,
+	FILE_BadClus   = 8,
+	FILE_Secure    = 9,
+	FILE_UpCase    = 10,
+	FILE_Extend    = 11,
+	FILE_reserved12 = 12,
 	FILE_reserved13 = 13,
 	FILE_reserved14 = 14,
 	FILE_reserved15 = 15,
-	FILE_first_user = 16,	/*
-				 * First user file, used as test limit for
-				 * whether to allow opening a file or not.
-				 */
+	FILE_first_user = 16,
 };
 
 /*
+ * enum - Flags for MFT record header
+ *
  * These are the so far known MFT_RECORD_* flags (16-bit) which contain
  * information about the mft record in which they are present.
+ *
+ * MFT_RECORD_IN_USE:        This MFT record is allocated and in use.
+ *                           (bit set = record is valid/used; clear = free)
+ * MFT_RECORD_IS_DIRECTORY:  This MFT record represents a directory.
+ *                           (Used to quickly distinguish files from directories)
+ * MFT_RECORD_IS_4:          Indicates the record is a special "record 4" type.
+ *                           (Rarely used; related to NTFS internal special cases,
+ *                           often for $AttrDef or early system files)
+ * MFT_RECORD_IS_VIEW_INDEX: This MFT record is used as a view index.
+ *                           (Specific to NTFS indexed views or object ID indexes)
+ * MFT_REC_SPACE_FILLER:     Dummy value to force the enum to be 16-bit wide.
+ *                           (Not a real flag; just a sentinel to ensure the type
+ *                           is __le16 and no higher bits are accidentally used)
  */
 enum {
 	MFT_RECORD_IN_USE		= cpu_to_le16(0x0001),
@@ -313,174 +382,124 @@ enum {
 #define MREF_ERR(x)	((int)((s64)(x)))
 
 /*
+ * struct mft_record - NTFS Master File Table (MFT) record header
+ *
  * The mft record header present at the beginning of every record in the mft.
  * This is followed by a sequence of variable length attribute records which
  * is terminated by an attribute of type AT_END which is a truncated attribute
  * in that it only consists of the attribute type code AT_END and none of the
  * other members of the attribute structure are present.
+ *
+ * magic:               Record magic ("FILE" for valid MFT entries).
+ *                      See ntfs_record magic enum for other values.
+ * usa_ofs:             Offset to Update Sequence Array (see ntfs_record).
+ * usa_count:           Number of entries in USA (see ntfs_record).
+ * lsn:                 Log sequence number (LSN) from $LogFile.
+ *                      Incremented on every modification to this record.
+ * sequence_number:     Reuse count of this MFT record slot.
+ *                      Incremented (skipping zero) when the file is deleted.
+ *                      Zero means never reused or special case.
+ *                      Part of MFT reference (together with record number).
+ * link_count:          Number of hard links (directory entries) to this file.
+ *                      Only meaningful in base MFT records.
+ *                      When deleting a directory entry:
+ *                        - If link_count == 1, delete the whole file
+ *                        - Else remove only the $FILE_NAME attribute and decrement
+ * attrs_offset:        Byte offset from start of MFT record to first attribute.
+ *                      Must be 8-byte aligned.
+ * flags:               Bit array of MFT_RECORD_* flags (see MFT_RECORD_IN_USE enum).
+ *                      MFT_RECORD_IN_USE cleared when record is freed/deleted.
+ * bytes_in_use:        Number of bytes actually used in this MFT record.
+ *                      Must be 8-byte aligned.
+ *                      Includes header + all attributes + padding.
+ * bytes_allocated:     Total allocated size of this MFT record.
+ *                      Usually equal to MFT record size (1024 bytes or cluster size).
+ * base_mft_record:     MFT reference to the base record.
+ *                      0 for base records.
+ *                      Non-zero for extension records → points to base record
+ *                      containing the $ATTRIBUTE_LIST that describes this extension.
+ * next_attr_instance:  Next attribute instance number to assign.
+ *                      Incremented after each use.
+ *                      Reset to 0 when MFT record is reused.
+ *                      First instance is always 0.
+ * reserved:            Reserved for alignment (NTFS 3.1+).
+ * mft_record_number:   This MFT record's number (index in $MFT).
+ *                      Only present in NTFS 3.1+ (Windows XP and above).
  */
 struct mft_record {
-	__le32 magic;		/* Usually the magic is "FILE". */
-	__le16 usa_ofs;		/* See ntfs_record struct definition above. */
-	__le16 usa_count;		/* See ntfs_record struct  definition above. */
+	__le32 magic;
+	__le16 usa_ofs;
+	__le16 usa_count;
 
-	__le64 lsn;		/*
-				 * LogFile sequence number for this record.
-				 * Changed every time the record is modified.
-				 */
-	__le16 sequence_number;	/*
-				 * Number of times this mft record has been
-				 * reused. (See description for MFT_REF
-				 * above.) NOTE: The increment (skipping zero)
-				 * is done when the file is deleted. NOTE: If
-				 * this is zero it is left zero.
-				 */
-	__le16 link_count;	/*
-				 * Number of hard links, i.e. the number of
-				 * directory entries referencing this record.
-				 * NOTE: Only used in mft base records.
-				 * NOTE: When deleting a directory entry we
-				 * check the link_count and if it is 1 we
-				 * delete the file. Otherwise we delete the
-				 * struct file_name_attr being referenced by the
-				 * directory entry from the mft record and
-				 * decrement the link_count.
-				 */
-	__le16 attrs_offset;	/*
-				 * Byte offset to the first attribute in this
-				 * mft record from the start of the mft record.
-				 * NOTE: Must be aligned to 8-byte boundary.
-				 */
-	__le16 flags;		/*
-				 * Bit array of MFT_RECORD_FLAGS. When a file
-				 * is deleted, the MFT_RECORD_IN_USE flag is
-				 * set to zero.
-				 */
-	__le32 bytes_in_use;	/*
-				 * Number of bytes used in this mft record.
-				 * NOTE: Must be aligned to 8-byte boundary.
-				 */
-	__le32 bytes_allocated;	/*
-				 * Number of bytes allocated for this mft
-				 * record. This should be equal to the mft
-				 * record size.
-				 */
-	__le64 base_mft_record;	  /*
-				   * This is zero for base mft records.
-				   * When it is not zero it is a mft reference
-				   * pointing to the base mft record to which
-				   * this record belongs (this is then used to
-				   * locate the attribute list attribute present
-				   * in the base record which describes this
-				   * extension record and hence might need
-				   * modification when the extension record
-				   * itself is modified, also locating the
-				   * attribute list also means finding the other
-				   * potential extents, belonging to the non-base
-				   * mft record).
-				   */
-	__le16 next_attr_instance; /*
-				    * The instance number that will be assigned to
-				    * the next attribute added to this mft record.
-				    * NOTE: Incremented each time after it is used.
-				    * NOTE: Every time the mft record is reused
-				    * this number is set to zero.  NOTE: The first
-				    * instance number is always 0.
-				    */
-/* The below fields are specific to NTFS 3.1+ (Windows XP and above): */
-	__le16 reserved;		/* Reserved/alignment. */
-	__le32 mft_record_number;	/* Number of this mft record. */
-/*
- * When (re)using the mft record, we place the update sequence array at this
- * offset, i.e. before we start with the attributes.  This also makes sense,
- * otherwise we could run into problems with the update sequence array
- * containing in itself the last two bytes of a sector which would mean that
- * multi sector transfer protection wouldn't work.  As you can't protect data
- * by overwriting it since you then can't get it back...
- * When reading we obviously use the data from the ntfs record header.
- */
+	__le64 lsn;
+	__le16 sequence_number;
+	__le16 link_count;
+	__le16 attrs_offset;
+	__le16 flags;
+	__le32 bytes_in_use;
+	__le32 bytes_allocated;
+	__le64 base_mft_record;
+	__le16 next_attr_instance;
+	__le16 reserved;
+	__le32 mft_record_number;
 } __packed;
 
 static_assert(sizeof(struct mft_record) == 48);
 
-/* This is the version without the NTFS 3.1+ specific fields. */
-struct mft_record_old {
-	__le32 magic;		/* Usually the magic is "FILE". */
-	__le16 usa_ofs;		/* See ntfs_record struct definition above. */
-	__le16 usa_count;	/* See ntfs_record struct  definition above. */
-
-	__le64 lsn;		/*
-				 * LogFile sequence number for this record.
-				 * Changed every time the record is modified.
-				 */
-	__le16 sequence_number;	/*
-				 * Number of times this mft record has been
-				 * reused. (See description for MFT_REF
-				 * above.) NOTE: The increment (skipping zero)
-				 * is done when the file is deleted. NOTE: If
-				 * this is zero it is left zero.
-				 */
-	__le16 link_count;	/*
-				 * Number of hard links, i.e. the number of
-				 * directory entries referencing this record.
-				 * NOTE: Only used in mft base records.
-				 * NOTE: When deleting a directory entry we
-				 * check the link_count and if it is 1 we
-				 * delete the file. Otherwise we delete the
-				 * struct file_name_attr being referenced by the
-				 * directory entry from the mft record and
-				 * decrement the link_count.
-				 */
-	__le16 attrs_offset;	/*
-				 * Byte offset to the first attribute in this
-				 * mft record from the start of the mft record.
-				 * NOTE: Must be aligned to 8-byte boundary.
-				 */
-	__le16 flags;		/*
-				 * Bit array of MFT_RECORD_FLAGS. When a file
-				 * is deleted, the MFT_RECORD_IN_USE flag is
-				 * set to zero.
-				 */
-	__le32 bytes_in_use;	/*
-				 * Number of bytes used in this mft record.
-				 * NOTE: Must be aligned to 8-byte boundary.
-				 */
-	__le32 bytes_allocated;	/*
-				 * Number of bytes allocated for this mft
-				 * record. This should be equal to the mft
-				 * record size.
-				 */
-	__le64 base_mft_record;	  /*
-				   * This is zero for base mft records.
-				   * When it is not zero it is a mft reference
-				   * pointing to the base mft record to which
-				   * this record belongs (this is then used to
-				   * locate the attribute list attribute present
-				   * in the base record which describes this
-				   * extension record and hence might need
-				   * modification when the extension record
-				   * itself is modified, also locating the
-				   * attribute list also means finding the other
-				   * potential extents, belonging to the non-base
-				   * mft record).
-				   */
-	__le16 next_attr_instance; /*
-				    * The instance number that will be assigned to
-				    * the next attribute added to this mft record.
-				    * NOTE: Incremented each time after it is used.
-				    * NOTE: Every time the mft record is reused
-				    * this number is set to zero.  NOTE: The first
-				    * instance number is always 0.
-				    */
-/*
- * When (re)using the mft record, we place the update sequence array at this
- * offset, i.e. before we start with the attributes.  This also makes sense,
- * otherwise we could run into problems with the update sequence array
- * containing in itself the last two bytes of a sector which would mean that
- * multi sector transfer protection wouldn't work.  As you can't protect data
- * by overwriting it since you then can't get it back...
- * When reading we obviously use the data from the ntfs record header.
+/**x
+ * struct mft_record_old - Old NTFS MFT record header (pre-NTFS 3.1 / Windows XP)
+ *
+ * This is the older version of the MFT record header used in NTFS versions
+ * prior to 3.1 (Windows XP and later). It lacks the additional fields
+ * @reserved and @mft_record_number that were added in NTFS 3.1+.
+ *
+ * @magic:              Record magic ("FILE" for valid MFT entries).
+ *                      See ntfs_record magic enum for other values.
+ * @usa_ofs:            Offset to Update Sequence Array (see ntfs_record).
+ * @usa_count:          Number of entries in USA (see ntfs_record).
+ * @lsn:                Log sequence number (LSN) from $LogFile.
+ *                      Incremented on every modification to this record.
+ * @sequence_number:    Reuse count of this MFT record slot.
+ *                      Incremented (skipping zero) when the file is deleted.
+ *                      Zero means never reused or special case.
+ *                      Part of MFT reference (together with record number).
+ * @link_count:         Number of hard links (directory entries) to this file.
+ *                      Only meaningful in base MFT records.
+ *                      When deleting a directory entry:
+ *                        - If link_count == 1, delete the whole file
+ *                        - Else remove only the $FILE_NAME attribute and decrement
+ * @attrs_offset:       Byte offset from start of MFT record to first attribute.
+ *                      Must be 8-byte aligned.
+ * @flags:              Bit array of MFT_RECORD_* flags (see MFT_RECORD_IN_USE enum).
+ *                      MFT_RECORD_IN_USE cleared when record is freed/deleted.
+ * @bytes_in_use:       Number of bytes actually used in this MFT record.
+ *                      Must be 8-byte aligned.
+ *                      Includes header + all attributes + padding.
+ * @bytes_allocated:    Total allocated size of this MFT record.
+ *                      Usually equal to MFT record size (1024 bytes or cluster size).
+ * @base_mft_record:    MFT reference to the base record.
+ *                      0 for base records.
+ *                      Non-zero for extension records → points to base record
+ *                      containing the $ATTRIBUTE_LIST that describes this extension.
+ * @next_attr_instance: Next attribute instance number to assign.
+ *                      Incremented after each use.
+ *                      Reset to 0 when MFT record is reused.
+ *                      First instance is always 0.
  */
+struct mft_record_old {
+	__le32 magic;
+	__le16 usa_ofs;
+	__le16 usa_count;
+
+	__le64 lsn;
+	__le16 sequence_number;
+	__le16 link_count;
+	__le16 attrs_offset;
+	__le16 flags;
+	__le32 bytes_in_use;
+	__le32 bytes_allocated;
+	__le64 base_mft_record;
+	__le16 next_attr_instance;
 } __packed;
 
 static_assert(sizeof(struct mft_record_old) == 42);
@@ -564,45 +583,47 @@ enum {
 };
 
 /*
+ * enum - Attribute definition flags
+ *
  * The flags (32-bit) describing attribute properties in the attribute
  * definition structure.
  * The INDEXABLE flag is fairly certainly correct as only the file
  * name attribute has this flag set and this is the only attribute indexed in
  * NT4.
+ *
+ * ATTR_DEF_INDEXABLE:      Attribute can be indexed.
+ *                          (Used for creating indexes like $I30, $SDH, etc.)
+ * ATTR_DEF_MULTIPLE:       Attribute type can be present multiple times
+ *                          in the MFT record of an inode.
+ *                          (e.g., multiple $FILE_NAME, $DATA streams)
+ * ATTR_DEF_NOT_ZERO:       Attribute value must contain at least one non-zero byte.
+ *                          (Prevents empty or all-zero values)
+ * ATTR_DEF_INDEXED_UNIQUE: Attribute must be indexed and the value must be unique
+ *                          for this attribute type across all MFT records of an inode.
+ *                          (e.g., security descriptor IDs in $Secure)
+ * ATTR_DEF_NAMED_UNIQUE:   Attribute must be named and the name must be unique
+ *                          for this attribute type across all MFT records of an inode.
+ *                          (e.g., named $DATA streams or alternate data streams)
+ * ATTR_DEF_RESIDENT:       Attribute must be resident (stored in MFT record).
+ *                          (Cannot be non-resident/sparse/compressed)
+ * ATTR_DEF_ALWAYS_LOG:     Always log modifications to this attribute in $LogFile,
+ *                          regardless of whether it is resident or non-resident.
+ *                          Without this flag, modifications are logged only if resident.
+ *                          (Used for critical metadata attributes)
  */
 enum {
-	ATTR_DEF_INDEXABLE	= cpu_to_le32(0x02), /* Attribute can be indexed. */
-	ATTR_DEF_MULTIPLE	= cpu_to_le32(0x04), /*
-						      * Attribute type can be present
-						      * multiple times in the mft records
-						      * of an inode.
-						      */
-	ATTR_DEF_NOT_ZERO	= cpu_to_le32(0x08), /*
-						      * Attribute value must contain
-						      * at least one non-zero byte.
-						      */
-	ATTR_DEF_INDEXED_UNIQUE	= cpu_to_le32(0x10), /*
-						      * Attribute must be indexed and
-						      * the attribute value must be unique
-						      * for the attribute type in all of
-						      * the mft records of an inode.
-						      */
-	ATTR_DEF_NAMED_UNIQUE	= cpu_to_le32(0x20), /*
-						      * Attribute must be named and
-						      * the name must be unique for
-						      * the attribute type in all of the mft
-						      * records of an inode.
-						      */
-	ATTR_DEF_RESIDENT	= cpu_to_le32(0x40), /* Attribute must be resident. */
-	ATTR_DEF_ALWAYS_LOG	= cpu_to_le32(0x80), /*
-						      * Always log modifications to this attribute,
-						      * regardless of whether it is resident or
-						      * non-resident.  Without this, only log
-						      * modifications if the attribute is resident.
-						      */
+	ATTR_DEF_INDEXABLE	= cpu_to_le32(0x02),
+	ATTR_DEF_MULTIPLE	= cpu_to_le32(0x04),
+	ATTR_DEF_NOT_ZERO	= cpu_to_le32(0x08),
+	ATTR_DEF_INDEXED_UNIQUE	= cpu_to_le32(0x10),
+	ATTR_DEF_NAMED_UNIQUE	= cpu_to_le32(0x20),
+	ATTR_DEF_RESIDENT	= cpu_to_le32(0x40),
+	ATTR_DEF_ALWAYS_LOG	= cpu_to_le32(0x80),
 };
 
 /*
+ * struct attr_def - Attribute definition entry ($AttrDef array)
+ *
  * The data attribute of FILE_AttrDef contains a sequence of attribute
  * definitions for the NTFS volume. With this, it is supposed to be safe for an
  * older NTFS driver to mount a volume containing a newer NTFS version without
@@ -610,28 +631,54 @@ enum {
  * Entries are sorted by attribute type. The flags describe whether the
  * attribute can be resident/non-resident and possibly other things, but the
  * actual bits are unknown.
+ *
+ * @name:           Unicode (UTF-16LE) name of the attribute (e.g. "$DATA", "$FILE_NAME").
+ *                  Zero-terminated string, maximum 0x40 characters (128 bytes).
+ *                  Used for human-readable display and debugging.
+ * @type:           Attribute type code (ATTR_TYPE_* constants).
+ *                  Defines which attribute this entry describes (e.g. 0x10 = $STANDARD_INFORMATION).
+ * @display_rule:   Default display rule (usually 0; rarely used in modern NTFS).
+ *                  Controls how the attribute is displayed in tools (legacy).
+ * @collation_rule: Default collation rule for indexing this attribute.
+ *                  Determines sort order when indexed (e.g. CASE_SENSITIVE, UNICODE).
+ *                  Used in $I30, $SDH, $SII, etc.
+ * @flags:          Bit array of attribute constraints (ATTR_DEF_* flags).
+ *                  See ATTR_DEF_INDEXABLE, ATTR_DEF_MULTIPLE, etc.
+ *                  Defines whether the attribute can be indexed, multiple, resident-only, etc.
+ * @min_size:       Optional minimum size of the attribute value (in bytes).
+ *                  0 means no minimum enforced.
+ * @max_size:       Maximum allowed size of the attribute value (in bytes).
  */
 struct attr_def {
-	__le16 name[0x40];		/* Unicode name of the attribute. Zero terminated. */
-	__le32 type;			/* Type of the attribute. */
-	__le32 display_rule;		/* Default display rule. */
-	__le32 collation_rule;		/* Default collation rule. */
-	__le32 flags;			/* Flags describing the attribute. */
-	__le64 min_size;			/* Optional minimum attribute size. */
-	__le64 max_size;			/* Maximum size of attribute. */
+	__le16 name[0x40];
+	__le32 type;
+	__le32 display_rule;
+	__le32 collation_rule;
+	__le32 flags;
+	__le64 min_size;
+	__le64 max_size;
 } __packed;
 
 static_assert(sizeof(struct attr_def) == 160);
 
 /*
- * Attribute flags (16-bit).
+ * enum - Attribute flags (16-bit) for non-resident attributes
+ *
+ * ATTR_IS_COMPRESSED:      Attribute is compressed.
+ *                          If set, data is compressed using the method in
+ *                          ATTR_COMPRESSION_MASK.
+ * ATTR_COMPRESSION_MASK:   Mask for compression method.
+ *                          Valid values are defined in NTFS compression types
+ *                          (e.g., 0x02 = LZNT1, etc.).
+ *                          Also serves as the first illegal value for method.
+ * ATTR_IS_ENCRYPTED:       Attribute is encrypted.
+ *                          Data is encrypted using EFS (Encrypting File System).
+ * ATTR_IS_SPARSE:          Attribute is sparse.
+ *                          Contains holes (unallocated regions) that read as zeros.
  */
 enum {
 	ATTR_IS_COMPRESSED    = cpu_to_le16(0x0001),
-	ATTR_COMPRESSION_MASK = cpu_to_le16(0x00ff), /*
-						      * Compression method mask.
-						      * Also, first illegal value.
-						      */
+	ATTR_COMPRESSION_MASK = cpu_to_le16(0x00ff),
 	ATTR_IS_ENCRYPTED     = cpu_to_le16(0x4000),
 	ATTR_IS_SPARSE	      = cpu_to_le16(0x8000),
 } __packed;
@@ -704,14 +751,17 @@ enum {
  */
 
 /*
- * Flags of resident attributes (8-bit).
+ * enum - Flags for resident attributes (8-bit)
+ *
+ * RESIDENT_ATTR_IS_INDEXED: Attribute is referenced in an index.
+ *                           (e.g., part of an index key or entry)
+ *                           Has implications for deletion and modification:
+ *                            - Cannot be freely removed if indexed
+ *                            - Index must be updated when value changes
+ *                            - Used for attributes like $FILE_NAME in directories
  */
 enum {
-	RESIDENT_ATTR_IS_INDEXED = 0x01, /*
-					  * Attribute is referenced in an index
-					  * (has implications for deleting and
-					  * modifying the attribute).
-					  */
+	RESIDENT_ATTR_IS_INDEXED = 0x01,
 } __packed;
 
 /*
