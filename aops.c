@@ -859,20 +859,6 @@ static int ntfs_writepages(struct address_space *mapping,
 	if (!NInoNonResident(ni))
 		return 0;
 
-	if (NInoMstProtected(ni) && ni->mft_no == FILE_MFT) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
-		struct folio *folio = NULL;
-		int error;
-
-		while ((folio = writeback_iter(mapping, wbc, folio, &error)))
-			error = ntfs_mft_writepage(folio, wbc);
-		return error;
-#else
-		return write_cache_pages(mapping, wbc,
-				ntfs_mft_writepage, mapping);
-#endif
-	}
-
 	/* If file is encrypted, deny access, just like NT4. */
 	if (NInoEncrypted(ni)) {
 		ntfs_debug("Denying write access to encrypted file.");
