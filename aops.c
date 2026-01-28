@@ -164,10 +164,20 @@ void ntfs_bio_end_io(struct bio *bio)
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-static int ntfs_write_mft_block(struct ntfs_inode *ni, struct folio *folio,
-		struct writeback_control *wbc)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
+static int ntfs_write_mft_block(struct folio *folio, struct writeback_control *wbc)
 {
-	struct inode *vi = VFS_I(ni);
+#else
+static int ntfs_write_mft_block(struct folio *folio, struct writeback_control *wbc,
+				void *data)
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
+	struct address_space *mapping = folio->mapping;
+#else
+	struct address_space *mapping = data;
+#endif
+	struct inode *vi = mapping->host;
+	struct ntfs_inode *ni = NTFS_I(vi);
 	struct ntfs_volume *vol = ni->vol;
 	u8 *kaddr;
 	struct ntfs_inode *locked_nis[PAGE_SIZE / NTFS_BLOCK_SIZE];
@@ -180,9 +190,17 @@ static int ntfs_write_mft_block(struct ntfs_inode *ni, struct folio *folio,
 	s64 end_vcn = ntfs_bytes_to_cluster(vol, ni->allocated_size);
 	unsigned int folio_sz;
 	struct runlist_element *rl;
+	loff_t i_size = i_size_read(vi);
 
 	ntfs_debug("Entering for inode 0x%lx, attribute type 0x%x, folio index 0x%lx.",
 			vi->i_ino, ni->type, folio->index);
+
+	/* We have to zero every time due to mmap-at-end-of-file. */
+	if (folio->index >= (i_size >> PAGE_SHIFT)) {
+		/* The page straddles i_size. */
+		unsigned int ofs = i_size & ~PAGE_MASK;
+		folio_zero_segment(folio, ofs, PAGE_SIZE);
+	}
 
 	lcn = lcn_from_index(vol, ni, folio->index);
 	if (lcn <= LCN_HOLE) {
@@ -267,7 +285,7 @@ flush_bio:
 #else
 				bio = bio_alloc(GFP_NOIO, 1);
 				if (!bio)
-					return NULL;
+					return -ENOMEM;
 				bio_set_dev(bio, vol->sb->s_bdev);
 				bio->bi_opf = REQ_OP_WRITE;
 #endif
@@ -344,10 +362,12 @@ unm_done:
 	return err;
 }
 #else
-static int ntfs_write_mft_block(struct ntfs_inode *ni, struct page *page,
-		struct writeback_control *wbc)
+static int ntfs_write_mft_block(struct page *page, struct writeback_control *wbc,
+				void *data)
 {
-	struct inode *vi = VFS_I(ni);
+	struct address_space *mapping = data;
+	struct inode *vi = mapping->host;
+	struct ntfs_inode *ni= NTFS_I(vi);
 	struct ntfs_volume *vol = ni->vol;
 	u8 *kaddr;
 	struct ntfs_inode *locked_nis[PAGE_SIZE / NTFS_BLOCK_SIZE];
@@ -360,9 +380,16 @@ static int ntfs_write_mft_block(struct ntfs_inode *ni, struct page *page,
 	s64 end_vcn = ni->allocated_size >> vol->cluster_size_bits;
 	unsigned int page_sz;
 	struct runlist_element *rl;
+	loff_t i_size = i_size_read(vi);
 
 	ntfs_debug("Entering for inode 0x%lx, attribute type 0x%x, page index 0x%lx.",
 			vi->i_ino, ni->type, page->index);
+
+	/* We have to zero every time due to mmap-at-end-of-file. */
+	if (page->index >= (i_size >> PAGE_SHIFT))
+		/* The page straddles i_size. */
+		zero_user_segment(page, i_size & ~PAGE_MASK, PAGE_SIZE);
+
 	BUG_ON(!NInoNonResident(ni));
 	BUG_ON(!NInoMstProtected(ni));
 
@@ -762,61 +789,6 @@ static void ntfs_readahead(struct readahead_control *rac)
 #endif
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
-static int ntfs_mft_writepage(struct folio *folio, struct writeback_control *wbc)
-#else
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-static int ntfs_mft_writepage(struct folio *folio, struct writeback_control *wbc,
-		void *data)
-#else
-static int ntfs_mft_writepage(struct page *page, struct writeback_control *wbc,
-		void *data)
-#endif
-#endif
-{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-	struct page *page = &folio->page;
-#endif
-#endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
-	struct address_space *mapping = folio->mapping;
-#else
-	struct address_space *mapping = data;
-#endif
-	struct inode *vi = mapping->host;
-	struct ntfs_inode *ni = NTFS_I(vi);
-	loff_t i_size;
-	int ret;
-
-	i_size = i_size_read(vi);
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	/* We have to zero every time due to mmap-at-end-of-file. */
-	if (folio->index >= (i_size >> PAGE_SHIFT)) {
-		/* The page straddles i_size. */
-		unsigned int ofs = i_size & ~PAGE_MASK;
-
-		folio_zero_segment(folio, ofs, PAGE_SIZE);
-	}
-
-	ret = ntfs_write_mft_block(ni, folio, wbc);
-#else
-	/* We have to zero every time due to mmap-at-end-of-file. */
-	if (page->index >= (i_size >> PAGE_SHIFT)) {
-		/* The page straddles i_size. */
-		unsigned int ofs = i_size & ~PAGE_MASK;
-
-		zero_user_segment(page, ofs, PAGE_SIZE);
-	}
-
-	ret = ntfs_write_mft_block(ni, page, wbc);
-#endif
-
-	mapping_set_error(mapping, ret);
-	return ret;
-}
-
 static int ntfs_mft_writepages(struct address_space *mapping,
 			       struct writeback_control *wbc)
 {
@@ -830,11 +802,11 @@ static int ntfs_mft_writepages(struct address_space *mapping,
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
 	while ((folio = writeback_iter(mapping, wbc, folio, &error)))
-		error = ntfs_mft_writepage(folio, wbc);
+		error = ntfs_write_mft_block(folio, wbc);
 	return error;
 #else
 	return write_cache_pages(mapping, wbc,
-				 ntfs_mft_writepage, mapping);
+				 ntfs_write_mft_block, mapping);
 #endif
 }
 
