@@ -103,7 +103,7 @@ jobs:
         cd xfstests-exfat
         cp local.config.ntfs local.config
         make -j$((`nproc`+1)) > /dev/null
-        echo 'FSTYP=ntfs' >> local.config
+        echo -e 'FSTYP=ntfs\nMOUNT_OPTIONS="-o acl"\nTEST_FS_MOUNT_OPTS="-o acl"' >> local.config
         sudo ./check generic/001
         sudo ./check generic/002
         sudo ./check generic/005
