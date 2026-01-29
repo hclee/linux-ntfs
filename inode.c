@@ -424,9 +424,8 @@ int ntfs_drop_big_inode(struct inode *inode)
 				spin_lock(&inode->i_lock);
 				atomic_dec(&inode->i_count);
 			}
-			return 0;
-		} else if (ni->type == AT_INDEX_ROOT)
-			return 0;
+		}
+		return 0;
 	}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 0)
