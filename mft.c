@@ -3197,7 +3197,6 @@ flush_bio:
 				ntfs_sync_mft_mirror(vol, mft_no,
 						(struct mft_record *)(kaddr + mft_ofs));
 		}
-
 	}
 
 	if (bio) {
