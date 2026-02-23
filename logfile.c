@@ -746,7 +746,11 @@ map_vcn:
 
 	memset(empty_buf, 0xff, vol->cluster_size);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+	ra = kzalloc_obj(*ra, GFP_NOFS);
+#else
 	ra = kzalloc(sizeof(*ra), GFP_NOFS);
+#endif
 	if (!ra)
 		goto err;
 

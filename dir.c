@@ -169,8 +169,13 @@ found_it:
 			 */
 			if (ie->key.file_name.file_name_type == FILE_NAME_DOS) {
 				if (!name) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+					name = kmalloc_obj(struct ntfs_name,
+							GFP_NOFS);
+#else
 					name = kmalloc(sizeof(struct ntfs_name),
 							GFP_NOFS);
+#endif
 					if (!name) {
 						err = -ENOMEM;
 						goto err_out;
@@ -462,8 +467,13 @@ found_it2:
 			 */
 			if (ie->key.file_name.file_name_type == FILE_NAME_DOS) {
 				if (!name) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+					name = kmalloc_obj(struct ntfs_name,
+							GFP_NOFS);
+#else
 					name = kmalloc(sizeof(struct ntfs_name),
 							GFP_NOFS);
+#endif
 					if (!name) {
 						err = -ENOMEM;
 						goto unm_err_out;
@@ -761,7 +771,11 @@ static int ntfs_ia_blocks_readahead(struct ntfs_inode *ia_ni, loff_t pos)
 	if (dir_start_index >= dir_end_index)
 		return 0;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+	dir_ra = kzalloc_obj(*dir_ra, GFP_NOFS);
+#else
 	dir_ra = kzalloc(sizeof(*dir_ra), GFP_NOFS);
+#endif
 	if (!dir_ra)
 		return -ENOMEM;
 
@@ -838,7 +852,11 @@ static int ntfs_readdir(struct file *file, struct dir_context *actor)
 		return -ENOMEM;
 	}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+	ra = kzalloc_obj(struct file_ra_state, GFP_NOFS);
+#else
 	ra = kzalloc(sizeof(struct file_ra_state), GFP_NOFS);
+#endif
 	if (!ra) {
 		kfree(name);
 		ntfs_index_ctx_put(ictx);
@@ -874,7 +892,11 @@ static int ntfs_readdir(struct file *file, struct dir_context *actor)
 			goto out;
 		}
 	} else if (!private) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+		private = kzalloc_obj(struct ntfs_file_private, GFP_KERNEL);
+#else
 		private = kzalloc(sizeof(struct ntfs_file_private), GFP_KERNEL);
+#endif
 		if (!private) {
 			err = -ENOMEM;
 			goto out;
@@ -1009,7 +1031,11 @@ nextdir:
 		}
 
 		if (!nir) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+			nir = kzalloc_obj(struct ntfs_index_ra, GFP_KERNEL);
+#else
 			nir = kzalloc(sizeof(struct ntfs_index_ra), GFP_KERNEL);
+#endif
 			if (nir) {
 				nir->start_index = index;
 				nir->count = 1;

@@ -11,7 +11,7 @@
 /*
  * Shutdown the filesystem.
  */
-#define FS_IOC_SHUTDOWN _IOR('X', 125, __u32)
+#define FS_IOC_SHUTDOWN _IOW('X', 125, __u32)
 
 /*
  * Flags for FS_IOC_SHUTDOWN

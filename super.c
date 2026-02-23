@@ -2063,7 +2063,11 @@ s64 get_nr_free_clusters(struct ntfs_volume *vol)
 	if (NVolFreeClusterKnown(vol))
 		return atomic64_read(&vol->free_clusters);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+	ra = kzalloc_obj(*ra, GFP_NOFS);
+#else
 	ra = kzalloc(sizeof(*ra), GFP_NOFS);
+#endif
 	if (!ra)
 		return 0;
 
@@ -2227,7 +2231,11 @@ static unsigned long __get_nr_free_mft_records(struct ntfs_volume *vol,
 
 	ntfs_debug("Entering.");
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+	ra = kzalloc_obj(*ra, GFP_NOFS);
+#else
 	ra = kzalloc(sizeof(*ra), GFP_NOFS);
+#endif
 	if (!ra)
 		return 0;
 
@@ -2811,7 +2819,11 @@ static int ntfs_init_fs_context(struct fs_context *fc)
 	struct ntfs_volume *vol;
 
 	/* Allocate a new struct ntfs_volume and place it in sb->s_fs_info. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+	vol = kmalloc_obj(struct ntfs_volume, GFP_NOFS);
+#else
 	vol = kmalloc(sizeof(struct ntfs_volume), GFP_NOFS);
+#endif
 	if (!vol)
 		return -ENOMEM;
 
