@@ -8,6 +8,7 @@
 #include <linux/types.h>
 #include <linux/ioctl.h>
 
+#ifndef FS_IOC_SHUTDOWN
 /*
  * Shutdown the filesystem.
  */
@@ -19,5 +20,6 @@
 #define FS_SHUTDOWN_FLAGS_DEFAULT	0x0
 #define FS_SHUTDOWN_FLAGS_LOGFLUSH	0x1	/* flush log but not data*/
 #define FS_SHUTDOWN_FLAGS_NOLOGFLUSH	0x2	/* don't flush log nor data */
+#endif
 
 #endif /* _UAPI_LINUX_NTFS_H */
