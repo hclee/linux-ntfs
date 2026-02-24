@@ -26,6 +26,9 @@
 #include "ntfs.h"
 #include "lcnalloc.h"
 #include "mft.h"
+#ifdef CONFIG_NTFS_FS_WOF_COMPRESSION
+#include "lib/lib.h"
+#endif
 
 /*
  * Constants used in the compression code
@@ -59,6 +62,23 @@ static u8 *ntfs_compression_buffer;
  * ntfs_cb_lock - mutex lock which protects ntfs_compression_buffer
  */
 static DEFINE_MUTEX(ntfs_cb_lock);
+
+#ifdef CONFIG_NTFS_FS_WOF_COMPRESSION
+static const __le16 WOF_NAME[] = {
+	cpu_to_le16('W'), cpu_to_le16('o'), cpu_to_le16('f'),
+	cpu_to_le16('C'), cpu_to_le16('o'), cpu_to_le16('m'),
+	cpu_to_le16('p'), cpu_to_le16('r'), cpu_to_le16('e'),
+	cpu_to_le16('s'), cpu_to_le16('s'), cpu_to_le16('e'),
+	cpu_to_le16('d'), cpu_to_le16('D'), cpu_to_le16('a'),
+	cpu_to_le16('t'), cpu_to_le16('a'),
+};
+#define WOF_NAME_LEN 17
+
+static struct xpress_decompressor *ntfs_xpress_ctx;
+static struct lzx_decompressor *ntfs_lzx_ctx;
+static DEFINE_MUTEX(ntfs_xpress_lock);
+static DEFINE_MUTEX(ntfs_lzx_lock);
+#endif
 
 /*
  * allocate_compression_buffers - allocate the decompression buffers
@@ -1623,3 +1643,247 @@ out:
 
 	return written;
 }
+
+#ifdef CONFIG_NTFS_FS_WOF_COMPRESSION
+static int parse_wof_chunk_table(struct ntfs_inode *ni, struct attr_record *attr,
+				 u64 chunk_idx, u64 *chunk_offset, u32 *chunk_size)
+{
+	u8 bytes_per_off;
+
+	/* Determine offset table entry size based on file size */
+	if (ni->data_size < (1ULL << 32))
+		bytes_per_off = sizeof(__le32);
+	else
+		bytes_per_off = sizeof(__le64);
+
+	if (!attr->non_resident) {
+		u64 off[2];
+
+		if (chunk_idx * bytes_per_off + bytes_per_off >
+		    le32_to_cpu(attr->data.resident.value_length))
+			return -EINVAL;
+
+		if (bytes_per_off == sizeof(__le32)) {
+			u32 *addr = (u32 *)((u8*)attr + le16_to_cpu(attr->data.resident.value_offset));
+			off[0] = chunk_idx ? le32_to_cpu(addr[chunk_idx - 1]) : 0;
+			off[1] = le32_to_cpu(addr[chunk_idx]);
+		} else {
+			u64 *addr = (u64 *)((u8*)attr + le16_to_cpu(attr->data.resident.value_offset));
+			off[0] = chunk_idx ? le64_to_cpu(addr[chunk_idx - 1]) : 0;
+			off[1] = le64_to_cpu(addr[chunk_idx]);
+		}
+
+		if (off[1] <= off[0] || off[1] > ni->data_size)
+			return -EINVAL;
+
+		*chunk_offset = off[0];
+		*chunk_size = (u32)(off[1] - off[0]);
+		return 0;
+	}
+	return -ENOTSUPP;
+}
+
+static int decompress_lzx_xpress(const char *compressed_data, size_t compressed_size,
+				 void *uncompressed_data, size_t uncompressed_size,
+				 u32 chunk_size)
+{
+	int err;
+
+	/* Check if chunk is uncompressed */
+	if (compressed_size == uncompressed_size) {
+		memcpy(uncompressed_data, compressed_data, uncompressed_size);
+		return 0;
+	}
+
+	err = 0;
+	if (chunk_size == 0x8000) {
+		/* LZX: 32KB chunk size */
+		mutex_lock(&ntfs_lzx_lock);
+		if (!ntfs_lzx_ctx) {
+			ntfs_lzx_ctx = lzx_allocate_decompressor();
+			if (!ntfs_lzx_ctx) {
+				err = -ENOMEM;
+				goto out_lzx;
+			}
+		}
+
+		if (lzx_decompress(ntfs_lzx_ctx, compressed_data, compressed_size,
+				   uncompressed_data, uncompressed_size))
+			err = -EINVAL;
+out_lzx:
+		mutex_unlock(&ntfs_lzx_lock);
+	} else {
+		/* XPRESS: smaller chunk sizes (4KB, 8KB, 16KB) */
+		mutex_lock(&ntfs_xpress_lock);
+		if (!ntfs_xpress_ctx) {
+			ntfs_xpress_ctx = xpress_allocate_decompressor();
+			if (!ntfs_xpress_ctx) {
+				err = -ENOMEM;
+				goto out_xpress;
+			}
+		}
+
+		if (xpress_decompress(ntfs_xpress_ctx, compressed_data, compressed_size,
+				      uncompressed_data, uncompressed_size))
+			err = -EINVAL;
+out_xpress:
+		mutex_unlock(&ntfs_xpress_lock);
+	}
+	return err;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+int ntfs_read_wof_compressed_block(struct folio *folio)
+{
+	struct page *page = &folio->page;
+#else
+int ntfs_read_wof_compressed_block(struct page *page)
+{
+#endif
+	struct address_space *mapping = page->mapping;
+	struct ntfs_inode *ni = NTFS_I(mapping->host);
+	struct ntfs_volume *vol = ni->vol;
+	loff_t i_size = i_size_read(VFS_I(ni));
+	char *decomp_mem = NULL, *chunk_mem = NULL;
+	struct page **pages = NULL;
+	u32 comp_unit, pages_per_chunk, chunk_size, decomp_size;
+	u64 chunk_offset_aligned, chunk_idx, chunk_count, chunk_offset;
+	unsigned long index;
+	int i, err = 0;
+	struct attr_record *attr = NULL;
+	struct ntfs_attr_search_ctx *ctx = NULL;
+	struct MFT_RECORD *m = NULL;
+	struct runlist_element *rl;
+	s64 vcn, lcn;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
+	index = page->__folio_index;
+#else
+	index = page->index;
+#endif
+
+	/* Determine frame size and frame number */
+	comp_unit = 1U << ni->itype.compressed.block_size_bits;
+	chunk_offset_aligned = (u64)index << PAGE_SHIFT;
+	chunk_offset_aligned &= ~((u64)comp_unit - 1);
+	chunk_idx = chunk_offset_aligned >> ni->itype.compressed.block_size_bits;
+	chunk_count = (i_size - 1) >> ni->itype.compressed.block_size_bits;
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx) {
+		err = -ENOMEM;
+		goto out;
+	}
+
+	err = ntfs_attr_lookup(AT_DATA, WOF_NAME, WOF_NAME_LEN,
+			       CASE_SENSITIVE, 0, NULL, 0, ctx);
+	if (err) {
+		ntfs_error(vol->sb, "WofCompressedData attribute not found");
+		goto out_put_ctx;
+	}
+
+	err = parse_wof_chunk_table(ni, ctx->attr, chunk_idx,
+				    &chunk_offset, &chunk_size);
+	if (err)
+		goto out_put_ctx;
+
+	if (chunk_size > comp_unit) {
+		ntfs_error(vol->sb, "Compressed size (%u) > frame size (%u)",
+			   chunk_size, comp_unit);
+		err = -EINVAL;
+		goto out_put_ctx;
+	}
+
+	if (chunk_idx == chunk_count)
+		decomp_size = 1 + ((i_size - 1) & (comp_unit - 1));
+	else
+		decomp_size = comp_unit;
+
+	/* Allocate pages for the uncompressed chunk */
+	pages_per_chunk = comp_unit >> PAGE_SHIFT;
+	pages = kmalloc_array(pages_per_chunk, sizeof(struct page *), GFP_NOFS);
+	if (!pages) {
+		err = -ENOMEM;
+		goto out_put_ctx;
+	}
+
+	for (i = 0; i < pages_per_chunk; i++) {
+		unsigned long pg_index = (chunk_offset_aligned >> PAGE_SHIFT) + i;
+
+		if (pg_index == index)
+			pages[i] = page;
+		else
+			pages[i] = grab_cache_page_nowait(mapping, pg_index);
+	}
+
+	decomp_mem = vmap(pages, pages_per_chunk, VM_MAP, PAGE_KERNEL);
+	if (!decomp_mem) {
+		err = -ENOMEM;
+		goto out_unlock;
+	}
+
+	/* Allocate buffer for compressed data */
+	chunk_mem = kvmalloc(chunk_size, GFP_KERNEL);
+	if (!chunk_mem) {
+		err = -ENOMEM;
+		goto out_unmap;
+	}
+
+	/* Read compressed data from disk */
+	if (!attr->non_resident) {
+		memcpy(chunk_mem,
+		       (u8*)attr + le16_to_cpu(attr->data.resident.value_offset) + chunk_offset,
+		       chunk_size);
+	}
+#if 0
+	 else {
+		/* Non-resident attribute - read from WOF data stream */
+		err = read_wof_stream(ni, chunk_mem, chunk_offset, chunk_size);
+		if (err)
+			goto out_free;
+#endif
+
+	err = decompress_lzx_xpress(chunk_mem, chunk_size,
+				    decomp_mem, decomp_size, comp_unit);
+	if (err) {
+		ntfs_error(vol->sb, "Decompression failed: %d", err);
+		goto out_free;
+	}
+
+	/* Zero any partial page at end */
+	if (decomp_size < comp_unit)
+		memset(decomp_mem + decomp_size, 0, comp_unit - decomp_size);
+
+	/* Mark pages as uptodate */
+	for (i = 0; i < pages_per_chunk; i++) {
+		if (pages[i]) {
+			SetPageUptodate(pages[i]);
+			flush_dcache_page(pages[i]);
+		}
+	}
+
+out_free:
+	kvfree(chunk_mem);
+out_unmap:
+	vunmap(decomp_mem);
+out_unlock:
+	for (i = 0; i < pages_per_chunk; i++) {
+		if (pages[i] && pages[i] != page) {
+			if (err)
+				ClearPageUptodate(pages[i]);
+			unlock_page(pages[i]);
+			put_page(pages[i]);
+		}
+	}
+	kfree(pages);
+out_put_ctx:
+	ntfs_attr_put_search_ctx(ctx);
+out:
+	if (err)
+		ClearPageUptodate(page);
+	else
+		SetPageUptodate(page);
+	unlock_page(page);
+	return err;
+}
+#endif

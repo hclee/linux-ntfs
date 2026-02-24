@@ -202,12 +202,13 @@ static inline struct ntfs_volume *NTFS_SB(struct super_block *sb)
 }
 
 /* Declarations of functions and global variables. */
-
 /* From fs/ntfs/compress.c */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 int ntfs_read_compressed_block(struct folio *folio);
+int ntfs_read_wof_compressed_block(struct folio *folio);
 #else
 int ntfs_read_compressed_block(struct page *page);
+int ntfs_read_wof_compressed_block(struct page *page);
 #endif
 int allocate_compression_buffers(void);
 void free_compression_buffers(void);

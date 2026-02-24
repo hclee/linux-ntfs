@@ -61,6 +61,10 @@ static int ntfs_readpage(struct file *file, struct page *page)
 		/* Compressed data streams are handled in compress.c. */
 		if (NInoNonResident(ni) && NInoCompressed(ni))
 			return ntfs_read_compressed_block(folio);
+#ifdef CONFIG_NTFS_FS_WOF_COMPRESSION
+		else if (NInoWofCompressed(ni))
+			return ntfs_read_wof_compressed_block(folio);
+#endif
 	}
 #else
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 19, 0)
@@ -112,7 +116,11 @@ static int ntfs_readpage(struct file *file, struct page *page)
 			BUG_ON(ni->type != AT_DATA);
 			BUG_ON(ni->name_len);
 			return ntfs_read_compressed_block(page);
-		}
+#ifdef CONFIG_NTFS_FS_WOF_COMPRESSION
+		} else if (NInoWofCompressed(ni))
+			return ntfs_read_wof_compressed_block(page);
+#endif
+
 	}
 #endif
 
