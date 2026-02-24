@@ -24,6 +24,25 @@ struct wsl_link_reparse_data {
 	char	link[];
 };
 
+struct wof_reparse_data {
+	__le32 version;
+	__le32 provider;
+	__le32 provider_version;
+	__le32 compression_format;
+} __packed;
+
+#define WOF_CURRENT_VERSION		cpu_to_le32(1)
+
+#define WOF_PROVIDER_WIM		cpu_to_le32(1)
+#define WOF_PROVIDER_FILE		cpu_to_le32(2)
+
+#define WOF_PROVIDER_CURRENT_VERSION	cpu_to_le32(1)
+
+#define WOF_COMPRESSION_XPRESS4K	cpu_to_le32(0)
+#define WOF_COMPRESSION_XPRESS8K	cpu_to_le32(1)
+#define WOF_COMPRESSION_XPRESS16K	cpu_to_le32(2)
+#define WOF_COMPRESSION_LZX		cpu_to_le32(3)
+
 /* Index entry in $Extend/$Reparse */
 struct reparse_index {
 	struct index_entry_header header;
@@ -79,8 +98,6 @@ static bool ntfs_is_valid_reparse_buffer(struct ntfs_inode *ni,
 static bool valid_reparse_data(struct ntfs_inode *ni,
 		const struct reparse_point *reparse_attr, size_t size)
 {
-	const struct wsl_link_reparse_data *wsl_reparse_data =
-		(const struct wsl_link_reparse_data *)reparse_attr->reparse_data;
 	unsigned int data_len = le16_to_cpu(reparse_attr->reparse_data_length);
 
 	if (ntfs_is_valid_reparse_buffer(ni, reparse_attr, size) == false)
@@ -88,6 +105,8 @@ static bool valid_reparse_data(struct ntfs_inode *ni,
 
 	switch (reparse_attr->reparse_tag) {
 	case IO_REPARSE_TAG_LX_SYMLINK:
+		const struct wsl_link_reparse_data *wsl_reparse_data =
+		    (const struct wsl_link_reparse_data *)reparse_attr->reparse_data;
 		if (data_len <= sizeof(wsl_reparse_data->type) ||
 		    wsl_reparse_data->type != cpu_to_le32(2))
 			return false;
@@ -99,6 +118,19 @@ static bool valid_reparse_data(struct ntfs_inode *ni,
 		if (data_len || !(ni->flags & FILE_ATTRIBUTE_RECALL_ON_OPEN))
 			return false;
 		break;
+	case IO_REPARSE_TAG_WOF:
+		const struct wof_reparse_data *wof_data =
+		    (const struct wof_reparse_data *)reparse_attr->reparse_data;
+		if (data_len < sizeof(struct wof_reparse_data) ||
+		    wof_data->version != WOF_CURRENT_VERSION ||
+		    wof_data->provider != WOF_PROVIDER_FILE ||
+		    wof_data->provider != WOF_PROVIDER_CURRENT_VERSION)
+			return false;
+		if (wof_data->compression_format != WOF_COMPRESSION_XPRESS4K ||
+		    wof_data->compression_format != WOF_COMPRESSION_XPRESS8K ||
+		    wof_data->compression_format != WOF_COMPRESSION_XPRESS16K ||
+		    wof_data->compression_format != WOF_COMPRESSION_LZX)
+			return false;
 	}
 
 	return true;
@@ -132,7 +164,7 @@ static unsigned int ntfs_reparse_tag_mode(struct reparse_point *reparse_attr)
 /*
  * Get the target for symbolic link
  */
-unsigned int ntfs_make_symlink(struct ntfs_inode *ni)
+unsigned int ntfs_parse_reparse(struct ntfs_inode *ni)
 {
 	s64 attr_size = 0;
 	unsigned int lth;
@@ -158,6 +190,14 @@ unsigned int ntfs_make_symlink(struct ntfs_inode *ni)
 					mode = ntfs_reparse_tag_mode(reparse_attr);
 				}
 			}
+			break;
+		case IO_REPARSE_TAG_WOF:
+			struct wof_reparse_data *wof_data =
+				(struct wof_reparse_data *)reparse_attr->reparse_data;
+			unsigned int format = le32_to_cpu(wof_data->compression_format);
+			ni->itype.compressed.block_size_bits = format + 12;
+			ni->itype.compressed.block_size = 1 << (format + 12);
+			NInoSetWofCompressed(ni);
 			break;
 		default:
 			mode = ntfs_reparse_tag_mode(reparse_attr);

@@ -170,6 +170,7 @@ struct ntfs_inode {
  * NI_Compressed		Unnamed data attr is compressed (f).
  *				Create compressed files by default (d).
  *				Attribute is compressed (a).
+ * NI_WofCompressed		Attribute is compressed with WOF compression (a).
  * NI_Encrypted			Unnamed data attr is encrypted (f).
  *				Create encrypted files by default (d).
  *				Attribute is encrypted (a).
@@ -194,6 +195,7 @@ enum {
 	NI_NonResident,
 	NI_IndexAllocPresent,
 	NI_Compressed,
+	NI_WofCompressed,
 	NI_Encrypted,
 	NI_Sparse,
 	NI_SparseDisabled,
@@ -253,6 +255,7 @@ NINO_FNS(MstProtected)
 NINO_FNS(NonResident)
 NINO_FNS(IndexAllocPresent)
 NINO_FNS(Compressed)
+NINO_FNS(WofCompressed)
 NINO_FNS(Encrypted)
 NINO_FNS(Sparse)
 NINO_FNS(SparseDisabled)

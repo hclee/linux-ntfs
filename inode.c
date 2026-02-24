@@ -937,7 +937,7 @@ skip_attr_list_load:
 		if (ni->flags & FILE_ATTR_REPARSE_POINT) {
 			unsigned int mode;
 
-			mode = ntfs_make_symlink(ni);
+			mode = ntfs_parse_reparse(ni);
 			if (mode)
 				vi->i_mode |= mode;
 			else {
