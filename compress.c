@@ -1645,10 +1645,76 @@ out:
 }
 
 #ifdef CONFIG_NTFS_FS_WOF_COMPRESSION
+static int ntfs_bdev_read_from_rl(struct ntfs_volume *vol, struct runlist *runlist,
+				  s64 start_vcn, u32 vcn_count, void *buf)
+{
+	struct runlist_element *rl;
+	u32 buf_off = 0;
+	s64 vcn = start_vcn;
+	int err;
+
+	down_read(&runlist->lock);
+	if (!runlist->rl) {
+		up_read(&runlist->lock);
+		return -EINVAL;
+	}
+
+	rl = __ntfs_attr_find_vcn_nolock(runlist, vcn);
+	if (IS_ERR(rl)) {
+		err = PTR_ERR(rl);
+		goto out_unlock;
+	}
+
+	while (vcn_count > 0) {
+		s64 lcn, clus_count;
+		loff_t byte_off;
+		u32 byte_len;
+
+		if (!rl->length || vcn < rl->vcn) {
+			err = -EINVAL;
+			goto out_unlock;
+		}
+
+		lcn = ntfs_rl_vcn_to_lcn(rl, vcn);
+		if (lcn < 0 && lcn != LCN_HOLE) {
+			err = -EINVAL;
+			goto out_unlock;
+		}
+
+		clus_count = min_t(s64, vcn_count,
+				      (rl->vcn + rl->length) - vcn);
+		byte_off = ntfs_cluster_to_bytes(vol, lcn);
+		byte_len = ntfs_cluster_to_bytes(vol, clus_count);
+
+		if (lcn == LCN_HOLE) {
+			memset((u8 *)buf + buf_off, 0, byte_len);
+		}
+		else {
+			err = ntfs_bdev_read(vol->sb->s_bdev, (char *)buf + buf_off,
+					     byte_off, byte_len);
+			if (err)
+				goto out_unlock;
+		}
+
+		buf_off += byte_len;
+		vcn += clus_count;
+		vcn_count -= clus_count;
+		rl++;
+	}
+
+	err = 0;
+out_unlock:
+	up_read(&runlist->lock);
+	return err;
+}
+
 static int parse_wof_chunk_table(struct ntfs_inode *ni, struct attr_record *attr,
 				 u64 chunk_idx, u64 *chunk_offset, u32 *chunk_size)
 {
 	u8 bytes_per_off;
+	u8 *buf_aligned = NULL, *buf = NULL;
+	u64 off[2];
+	int ret = 0;
 
 	/* Determine offset table entry size based on file size */
 	if (ni->data_size < (1ULL << 32))
@@ -1656,31 +1722,53 @@ static int parse_wof_chunk_table(struct ntfs_inode *ni, struct attr_record *attr
 	else
 		bytes_per_off = sizeof(__le64);
 
-	if (!attr->non_resident) {
-		u64 off[2];
+	if (attr->non_resident) {
+		struct ntfs_volume *vol = ni->vol;
+		s64 vcn = (chunk_idx * bytes_per_off) >> vol->cluster_size_bits;
 
+		buf_aligned = kmalloc(vol->cluster_size, GFP_KERNEL);
+		if (buf_aligned == NULL)
+			return -ENOMEM;
+		if (ntfs_bdev_read_from_rl(vol, &ni->runlist, vcn, 1, buf_aligned)) {
+			ret = -EIO;
+			goto out;
+		}
+		buf = buf_aligned + ((chunk_idx * bytes_per_off) & (vol->cluster_size - 1));
+	} else {
 		if (chunk_idx * bytes_per_off + bytes_per_off >
-		    le32_to_cpu(attr->data.resident.value_length))
-			return -EINVAL;
-
-		if (bytes_per_off == sizeof(__le32)) {
-			u32 *addr = (u32 *)((u8*)attr + le16_to_cpu(attr->data.resident.value_offset));
-			off[0] = chunk_idx ? le32_to_cpu(addr[chunk_idx - 1]) : 0;
-			off[1] = le32_to_cpu(addr[chunk_idx]);
-		} else {
-			u64 *addr = (u64 *)((u8*)attr + le16_to_cpu(attr->data.resident.value_offset));
-			off[0] = chunk_idx ? le64_to_cpu(addr[chunk_idx - 1]) : 0;
-			off[1] = le64_to_cpu(addr[chunk_idx]);
+		    le32_to_cpu(attr->data.resident.value_length)) {
+			ret = -EINVAL;
+			goto out;
 		}
 
-		if (off[1] <= off[0] || off[1] > ni->data_size)
-			return -EINVAL;
-
-		*chunk_offset = off[0];
-		*chunk_size = (u32)(off[1] - off[0]);
-		return 0;
+		buf = (u8*)attr + le16_to_cpu(attr->data.resident.value_offset) + (chunk_idx * bytes_per_off);
 	}
-	return -ENOTSUPP;
+
+	if (bytes_per_off == sizeof(__le32))
+	{
+		__le32 *addr = (__le32 *)buf;
+		off[0] = chunk_idx ? le32_to_cpu(addr[chunk_idx - 1]) : 0;
+		off[1] = le32_to_cpu(addr[chunk_idx]);
+	}
+	else
+	{
+		__le64 *addr = (__le64 *)buf;
+		off[0] = chunk_idx ? le64_to_cpu(addr[chunk_idx - 1]) : 0;
+		off[1] = le64_to_cpu(addr[chunk_idx]);
+	}
+
+	if (off[1] <= off[0] || off[1] > ni->data_size) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	*chunk_offset = off[0];
+	*chunk_size = (u32)(off[1] - off[0]);
+
+out:
+	if (buf_aligned)
+		kfree(buf_aligned);
+	return ret;
 }
 
 static int decompress_lzx_xpress(const char *compressed_data, size_t compressed_size,
@@ -1744,17 +1832,14 @@ int ntfs_read_wof_compressed_block(struct page *page)
 	struct ntfs_inode *ni = NTFS_I(mapping->host);
 	struct ntfs_volume *vol = ni->vol;
 	loff_t i_size = i_size_read(VFS_I(ni));
-	char *decomp_mem = NULL, *chunk_mem = NULL;
+	char *decomp_mem = NULL, *chunk_mem = NULL, *chunk_mem_aligned;
 	struct page **pages = NULL;
-	u32 comp_unit, pages_per_chunk, chunk_size, decomp_size;
+	u32 comp_unit, pages_per_chunk, chunk_size, chunk_size_aligned, decomp_size;
 	u64 chunk_offset_aligned, chunk_idx, chunk_count, chunk_offset;
 	unsigned long index;
 	int i, err = 0;
 	struct attr_record *attr = NULL;
 	struct ntfs_attr_search_ctx *ctx = NULL;
-	struct MFT_RECORD *m = NULL;
-	struct runlist_element *rl;
-	s64 vcn, lcn;
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
 	index = page->__folio_index;
@@ -1767,7 +1852,7 @@ int ntfs_read_wof_compressed_block(struct page *page)
 	chunk_offset_aligned = (u64)index << PAGE_SHIFT;
 	chunk_offset_aligned &= ~((u64)comp_unit - 1);
 	chunk_idx = chunk_offset_aligned >> ni->itype.compressed.block_size_bits;
-	chunk_count = (i_size - 1) >> ni->itype.compressed.block_size_bits;
+	chunk_count = DIV_ROUND_UP_ULL(i_size, comp_unit);
 
 	ctx = ntfs_attr_get_search_ctx(ni, NULL);
 	if (!ctx) {
@@ -1794,7 +1879,7 @@ int ntfs_read_wof_compressed_block(struct page *page)
 		goto out_put_ctx;
 	}
 
-	if (chunk_idx == chunk_count)
+	if (chunk_idx + 1 == chunk_count)
 		decomp_size = 1 + ((i_size - 1) & (comp_unit - 1));
 	else
 		decomp_size = comp_unit;
@@ -1823,25 +1908,30 @@ int ntfs_read_wof_compressed_block(struct page *page)
 	}
 
 	/* Allocate buffer for compressed data */
-	chunk_mem = kvmalloc(chunk_size, GFP_KERNEL);
-	if (!chunk_mem) {
+	chunk_size_aligned = DIV_ROUND_UP_ULL(chunk_offset + chunk_size, vol->cluster_size) -
+			     (chunk_offset >> vol->cluster_size_bits);
+	chunk_size_aligned <<= vol->cluster_size_bits;
+	chunk_mem_aligned = kvmalloc(chunk_size_aligned, GFP_KERNEL);
+	if (!chunk_mem_aligned) {
 		err = -ENOMEM;
 		goto out_unmap;
 	}
 
 	/* Read compressed data from disk */
 	if (!attr->non_resident) {
+		chunk_mem = chunk_mem_aligned;
 		memcpy(chunk_mem,
 		       (u8*)attr + le16_to_cpu(attr->data.resident.value_offset) + chunk_offset,
 		       chunk_size);
-	}
-#if 0
-	 else {
-		/* Non-resident attribute - read from WOF data stream */
-		err = read_wof_stream(ni, chunk_mem, chunk_offset, chunk_size);
+	} else {
+		err = ntfs_bdev_read_from_rl(vol, &ni->runlist,
+					     chunk_offset >> vol->cluster_size_bits,
+					     chunk_size_aligned >> vol->cluster_size_bits,
+					     chunk_mem_aligned);
 		if (err)
 			goto out_free;
-#endif
+		chunk_mem = chunk_mem_aligned + (chunk_offset & (vol->cluster_size - 1));
+	}
 
 	err = decompress_lzx_xpress(chunk_mem, chunk_size,
 				    decomp_mem, decomp_size, comp_unit);
@@ -1863,7 +1953,7 @@ int ntfs_read_wof_compressed_block(struct page *page)
 	}
 
 out_free:
-	kvfree(chunk_mem);
+	kvfree(chunk_mem_aligned);
 out_unmap:
 	vunmap(decomp_mem);
 out_unlock:
