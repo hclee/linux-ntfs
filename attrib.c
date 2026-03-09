@@ -5196,6 +5196,11 @@ void *ntfs_attr_readall(struct ntfs_inode *ni, const __le32 type,
 	}
 	bmp_ni = NTFS_I(bmp_vi);
 
+	if (ntfs_attr_size_bounds_check(ni->vol, type, bmp_ni->data_size)) {
+		ntfs_error(sb, "Attribute type 0x%02x size out of bounds\n", type);
+		goto out;
+	}
+
 	data = kvmalloc(bmp_ni->data_size, GFP_NOFS);
 	if (!data)
 		goto out;
