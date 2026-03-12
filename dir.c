@@ -1060,8 +1060,10 @@ out:
 	}
 
 	if (err) {
-		private->curr_pos = actor->pos;
-		private->end_in_iterate = true;
+		if (private) {
+			private->curr_pos = actor->pos;
+			private->end_in_iterate = true;
+		}
 		err = 0;
 	}
 	ntfs_index_ctx_put(ictx);
