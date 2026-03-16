@@ -752,7 +752,7 @@ out:
 		rl[rlpos].length = 0;
 	}
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	if (likely(!IS_ERR_OR_NULL(folio))) {
+	if (!IS_ERR_OR_NULL(folio)) {
 		if (need_writeback) {
 			ntfs_debug("Marking page dirty.");
 			folio_mark_dirty(folio);
@@ -763,7 +763,7 @@ out:
 		folio_put(folio);
 	}
 #else
-	if (likely(!IS_ERR_OR_NULL(page))) {
+	if (!IS_ERR_OR_NULL(page)) {
 		if (need_writeback) {
 			ntfs_debug("Marking page dirty.");
 			set_page_dirty(page);
