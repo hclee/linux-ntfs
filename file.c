@@ -285,6 +285,7 @@ static int ntfs_setattr_size(struct inode *vi, struct iattr *attr)
 
 	inode_dio_wait(vi);
 	/* Serialize against page faults */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 19, 0)
 	if (NInoNonResident(NTFS_I(vi)) && attr->ia_size < old_size) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
 		err = iomap_truncate_page(vi, attr->ia_size, NULL,
@@ -302,6 +303,7 @@ static int ntfs_setattr_size(struct inode *vi, struct iattr *attr)
 		if (err)
 			return err;
 	}
+#endif
 
 	truncate_setsize(vi, attr->ia_size);
 	err = ntfs_truncate_vfs(vi, attr->ia_size, old_size);
@@ -310,6 +312,7 @@ static int ntfs_setattr_size(struct inode *vi, struct iattr *attr)
 		return err;
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 19, 0)
 	if (NInoNonResident(ni) && attr->ia_size > old_size &&
 	    old_size % PAGE_SIZE != 0) {
 		loff_t len = min_t(loff_t,
@@ -329,6 +332,7 @@ static int ntfs_setattr_size(struct inode *vi, struct iattr *attr)
 #endif
 #endif
 	}
+#endif
 
 	return err;
 }
