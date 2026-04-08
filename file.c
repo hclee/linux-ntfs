@@ -1031,16 +1031,21 @@ static int ntfs_punch_hole(struct ntfs_inode *ni, int mode, loff_t offset,
 	end_vcn = ntfs_bytes_to_cluster(vol, end_offset - 1) + 1;
 
 	if (offset & vol->cluster_size_mask) {
-		loff_t to;
-
 		if (offset < ni->initialized_size) {
-			to = min_t(loff_t,
-				   ntfs_cluster_to_bytes(vol, start_vcn + 1),
-				   end_offset);
+			loff_t to;
+
+			if (end_offset < ni->data_size) {
+				to = min_t(loff_t,
+					   ntfs_cluster_to_bytes(vol, start_vcn + 1),
+					   end_offset);
+				if (to == end_offset && to >= ni->initialized_size)
+					to = min(ni->data_size, round_up(to, PAGE_SIZE));
+			} else
+				to = round_up(ni->data_size, (loff_t)SECTOR_SIZE);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
 			err = iomap_zero_range(vi, offset, to - offset, NULL,
 					       &ntfs_seek_iomap_ops,
-					       &ntfs_iomap_folio_ops, NULL);
+					       NULL, NULL);
 #else
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
 			err = iomap_zero_range(vi, offset, to - offset, NULL,
@@ -1057,21 +1062,29 @@ static int ntfs_punch_hole(struct ntfs_inode *ni, int mode, loff_t offset,
 	}
 
 	if (end_offset & vol->cluster_size_mask) {
-		loff_t from;
+		loff_t from, to;
 
 		from = ntfs_cluster_to_bytes(vol, end_vcn - 1);
 		if (from < ni->initialized_size) {
+			if (end_offset < ni->data_size) {
+				if (end_offset >= ni->initialized_size)
+					to = min(ni->data_size, round_up(end_offset, PAGE_SIZE));
+				else
+					to = end_offset;
+			} else
+				to = round_up(ni->data_size, (loff_t)SECTOR_SIZE);
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
-			err = iomap_zero_range(vi, from, end_offset - from,
+			err = iomap_zero_range(vi, from, to - from,
 					       NULL, &ntfs_seek_iomap_ops,
-					       &ntfs_iomap_folio_ops, NULL);
+					       NULL, NULL);
 #else
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
-			err = iomap_zero_range(vi, from, end_offset - from,
+			err = iomap_zero_range(vi, from, to - from,
 					       NULL, &ntfs_seek_iomap_ops,
 					       NULL);
 #else
-			err = iomap_zero_range(vi, from, end_offset - from,
+			err = iomap_zero_range(vi, from, to - from,
 					       NULL, &ntfs_seek_iomap_ops);
 #endif
 #endif
@@ -1085,6 +1098,22 @@ static int ntfs_punch_hole(struct ntfs_inode *ni, int mode, loff_t offset,
 	err = ntfs_non_resident_attr_punch_hole(ni, start_vcn,
 			end_vcn - start_vcn);
 	mutex_unlock(&ni->mrec_lock);
+
+	if (!err && i_size_read(vi) % PAGE_SIZE) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+		iomap_truncate_page(vi, i_size_read(vi), NULL,
+				&ntfs_read_iomap_ops,
+				&ntfs_iomap_folio_ops, NULL);
+#else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
+		iomap_truncate_page(vi, i_size_read(vi), NULL,
+				&ntfs_read_iomap_ops, NULL);
+#else
+		iomap_truncate_page(vi, i_size_read(vi), NULL,
+				&ntfs_read_iomap_ops);
+#endif
+#endif
+	}
 out:
 	return err;
 }
