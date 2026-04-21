@@ -734,6 +734,7 @@ out_lock:
 	return ret;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 static int ntfs_mkwrite_zero_non_uptodate_folios(struct inode *inode,
 						 loff_t start, loff_t end)
 {
@@ -815,13 +816,15 @@ static int ntfs_mkwrite_zero_non_uptodate_folios(struct inode *inode,
 
 	return err;
 }
+#endif
 
 static vm_fault_t ntfs_filemap_page_mkwrite(struct vm_fault *vmf)
 {
 	struct inode *inode = file_inode(vmf->vma->vm_file);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 	struct ntfs_inode *ni = NTFS_I(inode);
+#endif
 	vm_fault_t ret;
-	loff_t old_init_size = ni->initialized_size;
 
 	sb_start_pagefault(inode->i_sb);
 	file_update_time(vmf->vma->vm_file);
@@ -831,9 +834,11 @@ static vm_fault_t ntfs_filemap_page_mkwrite(struct vm_fault *vmf)
 	 * current initialized_size to the end of the fault folio, then advance
 	 * initialized_size to the same folio boundary.
 	 */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 	if (NInoNonResident(ni)) {
 		loff_t page_start = page_offset(vmf->page);
 		loff_t page_end = page_start + PAGE_SIZE;
+		loff_t old_init_size = ni->initialized_size;
 
 		if (page_end > old_init_size) {
 			int err;
@@ -855,6 +860,7 @@ static vm_fault_t ntfs_filemap_page_mkwrite(struct vm_fault *vmf)
 			}
 		}
 	}
+#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
 	ret = iomap_page_mkwrite(vmf, &ntfs_page_mkwrite_iomap_ops, NULL);

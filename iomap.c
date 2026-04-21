@@ -818,11 +818,13 @@ static int ntfs_write_da_iomap_begin_non_resident(struct inode *inode,
 			return err;
 	}
 
+#if 0
 	if (ntfs_iomap_flags & NTFS_IOMAP_FLAGS_MKWRITE &&
 	    iomap->offset + iomap->length > ni->initialized_size) {
 		err = ntfs_attr_set_initialized_size(ni, iomap->offset +
 				iomap->length);
 	}
+#endif
 
 	return err;
 }
