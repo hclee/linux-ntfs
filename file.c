@@ -735,29 +735,32 @@ out_lock:
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-static int ntfs_mkwrite_zero_non_uptodate_folios(struct inode *inode,
-						 loff_t start, loff_t end)
+static int ntfs_mkwrite_materialize_gap_folios(struct inode *inode,
+					       loff_t start, loff_t end)
 {
 	struct address_space *mapping = inode->i_mapping;
 	loff_t pos;
-	loff_t first_pos = round_down(start, PAGE_SIZE);
 	int err = 0;
 
 	if (start >= end)
 		return 0;
 
+	/*
+	 * initialized_size를 전진시키기 전에 gap에 해당하는 folio를 실제 page
+	 * cache에 materialize하고 dirty로 만들어 writeback 대상에 포함시킨다.
+	 *
+	 * 첫 partial folio는 [folio_start, start) 구간의 기존 유효 데이터를
+	 * 보존해야 하므로 read_mapping_folio()로 읽어온 뒤 tail만 zero한다.
+	 * 그 이후 folio는 gap 전체가 zero여야 하므로, page cache 존재 여부나
+	 * uptodate 여부와 무관하게 folio 전체를 zero + dirty 한다.
+	 */
 	filemap_invalidate_lock_shared(mapping);
-	for (pos = first_pos; pos < end; ) {
+	for (pos = round_down(start, PAGE_SIZE); pos < end; ) {
 		pgoff_t index = pos >> PAGE_SHIFT;
 		struct folio *folio;
-		loff_t folio_start;
-		loff_t folio_end;
-		loff_t zero_start;
-		loff_t zero_end;
 		loff_t next_pos = pos + PAGE_SIZE;
-		bool partial_first_folio = pos == first_pos && start != pos;
-		bool need_zero = false;
-		bool full_folio;
+		bool partial_first_folio =
+			pos == round_down(start, PAGE_SIZE) && start != pos;
 
 		if (partial_first_folio) {
 			folio = read_mapping_folio(mapping, index, NULL);
@@ -774,37 +777,33 @@ static int ntfs_mkwrite_zero_non_uptodate_folios(struct inode *inode,
 				err = PTR_ERR(folio);
 				break;
 			}
-
-			/*
-			 * 일반 gap folio는 page cache에 없거나 아직 uptodate가 아닐 때만
-			 * zero 대상으로 본다. 이미 uptodate인 folio는 mmap으로 기록된
-			 * 유효 데이터가 있을 수 있으므로 건드리지 않는다.
-			 */
-			need_zero = !folio_test_uptodate(folio);
 		}
 
-		folio_start = folio_pos(folio);
-		folio_end = folio_start + folio_size(folio);
-		next_pos = max_t(loff_t, next_pos, folio_end);
-		zero_start = max_t(loff_t, start, folio_start);
-		zero_end = min_t(loff_t, end, folio_end);
-		full_folio = zero_start == folio_start && zero_end == folio_end;
+		next_pos = max_t(loff_t, next_pos, folio_next_pos(folio));
 
 		if (partial_first_folio) {
+			loff_t zero_start = start;
+			loff_t zero_end = min_t(loff_t, end, folio_next_pos(folio));
+
 			/*
 			 * 첫 partial folio는 앞쪽의 기존 유효 데이터를 반드시
 			 * 보존해야 하므로, read fault와 동일하게 읽어온 뒤 tail을
 			 * zero + dirty한다.
 			 */
-			need_zero = zero_start < zero_end;
-		}
-
-		if (need_zero && zero_start < zero_end) {
-			folio_zero_segment(folio,
-					offset_in_folio(folio, zero_start),
-					offset_in_folio(folio, zero_end));
-			if (full_folio || folio_test_uptodate(folio))
-				folio_mark_uptodate(folio);
+			if (zero_start < zero_end) {
+				folio_zero_segment(folio,
+						offset_in_folio(folio, zero_start),
+						offset_in_folio(folio, zero_end));
+				iomap_dirty_folio(mapping, folio);
+			}
+		} else {
+			/*
+			 * 첫 folio 뒤의 gap은 initialized 바깥 전체 영역이므로 folio 전체를
+			 * zero로 덮고 uptodate + dirty로 만들어 writeback에서 실제 디스크
+			 * 클러스터가 0으로 초기화되게 한다.
+			 */
+			folio_zero_segment(folio, 0, folio_size(folio));
+			folio_mark_uptodate(folio);
 			iomap_dirty_folio(mapping, folio);
 		}
 
@@ -839,20 +838,21 @@ static vm_fault_t ntfs_filemap_page_mkwrite(struct vm_fault *vmf)
 		loff_t page_start = page_offset(vmf->page);
 		loff_t page_end = page_start + PAGE_SIZE;
 		loff_t old_init_size = ni->initialized_size;
+		loff_t new_init_size = min_t(loff_t, page_end, i_size_read(inode));
 
-		if (page_end > old_init_size) {
+		if (new_init_size > old_init_size) {
 			int err;
 
-			err = ntfs_mkwrite_zero_non_uptodate_folios(inode,
-							     old_init_size,
-							     page_end);
+			err = ntfs_mkwrite_materialize_gap_folios(inode,
+						      old_init_size,
+						      new_init_size);
 			if (err) {
 				sb_end_pagefault(inode->i_sb);
 				return vmf_fs_error(err);
 			}
 
 			mutex_lock(&ni->mrec_lock);
-			err = ntfs_attr_set_initialized_size(ni, min_t(loff_t, page_end, i_size_read(inode)));
+			err = ntfs_attr_set_initialized_size(ni, new_init_size);
 			mutex_unlock(&ni->mrec_lock);
 			if (err) {
 				sb_end_pagefault(inode->i_sb);
