@@ -779,11 +779,12 @@ static int ntfs_mkwrite_materialize_gap_folios(struct inode *inode,
 			}
 		}
 
-		next_pos = max_t(loff_t, next_pos, folio_next_pos(folio));
+		next_pos = max_t(loff_t, next_pos, folio_pos(folio) + folio_size(folio));
 
 		if (partial_first_folio) {
 			loff_t zero_start = start;
-			loff_t zero_end = min_t(loff_t, end, folio_next_pos(folio));
+			loff_t zero_end = min_t(loff_t, end,
+					       folio_pos(folio) + folio_size(folio));
 
 			/*
 			 * 첫 partial folio는 앞쪽의 기존 유효 데이터를 반드시
@@ -835,10 +836,10 @@ static vm_fault_t ntfs_filemap_page_mkwrite(struct vm_fault *vmf)
 	 */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 	if (NInoNonResident(ni)) {
-		loff_t page_start = page_offset(vmf->page);
-		loff_t page_end = page_start + PAGE_SIZE;
 		loff_t old_init_size = ni->initialized_size;
-		loff_t new_init_size = min_t(loff_t, page_end, i_size_read(inode));
+		loff_t new_init_size = min_t(loff_t,
+					     page_offset(vmf->page) + PAGE_SIZE,
+					     i_size_read(inode));
 
 		if (new_init_size > old_init_size) {
 			int err;
