@@ -734,19 +734,134 @@ out_lock:
 	return ret;
 }
 
+static int ntfs_mkwrite_zero_non_uptodate_folios(struct inode *inode,
+						 loff_t start, loff_t end)
+{
+	struct address_space *mapping = inode->i_mapping;
+	loff_t pos;
+	loff_t first_pos = round_down(start, PAGE_SIZE);
+	int err = 0;
+
+	if (start >= end)
+		return 0;
+
+	filemap_invalidate_lock_shared(mapping);
+	for (pos = first_pos; pos < end; ) {
+		pgoff_t index = pos >> PAGE_SHIFT;
+		struct folio *folio;
+		loff_t folio_start;
+		loff_t folio_end;
+		loff_t zero_start;
+		loff_t zero_end;
+		loff_t next_pos = pos + PAGE_SIZE;
+		bool partial_first_folio = pos == first_pos && start != pos;
+		bool need_zero = false;
+		bool full_folio;
+
+		if (partial_first_folio) {
+			folio = read_mapping_folio(mapping, index, NULL);
+			if (IS_ERR(folio)) {
+				err = PTR_ERR(folio);
+				break;
+			}
+			folio_lock(folio);
+		} else {
+			folio = __filemap_get_folio(mapping, index,
+						    FGP_LOCK | FGP_ACCESSED | FGP_CREAT,
+						    mapping_gfp_mask(mapping));
+			if (IS_ERR(folio)) {
+				err = PTR_ERR(folio);
+				break;
+			}
+
+			/*
+			 * 일반 gap folio는 page cache에 없거나 아직 uptodate가 아닐 때만
+			 * zero 대상으로 본다. 이미 uptodate인 folio는 mmap으로 기록된
+			 * 유효 데이터가 있을 수 있으므로 건드리지 않는다.
+			 */
+			need_zero = !folio_test_uptodate(folio);
+		}
+
+		folio_start = folio_pos(folio);
+		folio_end = folio_start + folio_size(folio);
+		next_pos = max_t(loff_t, next_pos, folio_end);
+		zero_start = max_t(loff_t, start, folio_start);
+		zero_end = min_t(loff_t, end, folio_end);
+		full_folio = zero_start == folio_start && zero_end == folio_end;
+
+		if (partial_first_folio) {
+			/*
+			 * 첫 partial folio는 앞쪽의 기존 유효 데이터를 반드시
+			 * 보존해야 하므로, read fault와 동일하게 읽어온 뒤 tail을
+			 * zero + dirty한다.
+			 */
+			need_zero = zero_start < zero_end;
+		}
+
+		if (need_zero && zero_start < zero_end) {
+			folio_zero_segment(folio,
+					offset_in_folio(folio, zero_start),
+					offset_in_folio(folio, zero_end));
+			if (full_folio || folio_test_uptodate(folio))
+				folio_mark_uptodate(folio);
+			iomap_dirty_folio(mapping, folio);
+		}
+
+		folio_unlock(folio);
+		folio_put(folio);
+		pos = next_pos;
+	}
+	filemap_invalidate_unlock_shared(mapping);
+
+	return err;
+}
+
 static vm_fault_t ntfs_filemap_page_mkwrite(struct vm_fault *vmf)
 {
 	struct inode *inode = file_inode(vmf->vma->vm_file);
+	struct ntfs_inode *ni = NTFS_I(inode);
 	vm_fault_t ret;
+	loff_t old_init_size = ni->initialized_size;
 
 	sb_start_pagefault(inode->i_sb);
 	file_update_time(vmf->vma->vm_file);
+	/*
+	 * Avoid lock inversion with iomap_page_mkwrite() by zeroing before it locks
+	 * the faulted folio. For this prototype path, zero the full gap from the
+	 * current initialized_size to the end of the fault folio, then advance
+	 * initialized_size to the same folio boundary.
+	 */
+	if (NInoNonResident(ni)) {
+		loff_t page_start = page_offset(vmf->page);
+		loff_t page_end = page_start + PAGE_SIZE;
+
+		if (page_end > old_init_size) {
+			int err;
+
+			err = ntfs_mkwrite_zero_non_uptodate_folios(inode,
+							     old_init_size,
+							     page_end);
+			if (err) {
+				sb_end_pagefault(inode->i_sb);
+				return vmf_fs_error(err);
+			}
+
+			mutex_lock(&ni->mrec_lock);
+			err = ntfs_attr_set_initialized_size(ni, min_t(loff_t, page_end, i_size_read(inode)));
+			mutex_unlock(&ni->mrec_lock);
+			if (err) {
+				sb_end_pagefault(inode->i_sb);
+				return vmf_fs_error(err);
+			}
+		}
+	}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
 	ret = iomap_page_mkwrite(vmf, &ntfs_page_mkwrite_iomap_ops, NULL);
 #else
 	ret = iomap_page_mkwrite(vmf, &ntfs_page_mkwrite_iomap_ops);
 #endif
+
 	sb_end_pagefault(inode->i_sb);
 	return ret;
 }
@@ -775,9 +890,13 @@ static int ntfs_file_mmap(struct file *file, struct vm_area_struct *vma)
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+	if (vma_desc_test(desc, VMA_SHARED_BIT)) {
+#else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
 	if (vma_desc_test_flags(desc, VMA_WRITE_BIT)) {
 #else
 	if (desc->vm_flags & VM_WRITE) {
+#endif
 #endif
 #else
 	if (vma->vm_flags & VM_WRITE) {
