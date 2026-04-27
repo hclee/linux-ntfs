@@ -734,19 +734,71 @@ out_lock:
 	return ret;
 }
 
+/*
+ * Zero fully skipped pages before the faulting page when a mmap write jumps
+ * over an uninitialized gap. The faulting page itself is populated by the
+ * read-fault path, so page_mkwrite only needs to clean up earlier pages.
+ */
+static int ntfs_page_mkwrite_zero_gap(struct inode *inode, loff_t page_start)
+{
+	struct ntfs_inode *ni = NTFS_I(inode);
+	unsigned long flags;
+	loff_t init_size;
+	int err;
+
+	if (!NInoNonResident(ni) || NInoCompressed(ni))
+		return 0;
+
+	read_lock_irqsave(&ni->size_lock, flags);
+	init_size = ni->initialized_size;
+	read_unlock_irqrestore(&ni->size_lock, flags);
+
+	page_start = min_t(loff_t, page_start, i_size_read(inode));
+	if (page_start <= init_size)
+		return 0;
+
+	err = ntfs_attr_map_whole_runlist(ni);
+	if (err)
+		return err;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+	return iomap_zero_range(inode, init_size, page_start - init_size,
+				NULL, &ntfs_seek_iomap_ops,
+				&ntfs_iomap_folio_ops, NULL);
+#else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
+	return iomap_zero_range(inode, init_size, page_start - init_size,
+				NULL, &ntfs_seek_iomap_ops, NULL);
+#else
+	return iomap_zero_range(inode, init_size, page_start - init_size,
+				NULL, &ntfs_seek_iomap_ops);
+#endif
+#endif
+}
+
 static vm_fault_t ntfs_filemap_page_mkwrite(struct vm_fault *vmf)
 {
 	struct inode *inode = file_inode(vmf->vma->vm_file);
+	loff_t page_start = (loff_t)vmf->pgoff << PAGE_SHIFT;
 	vm_fault_t ret;
+	int err;
 
 	sb_start_pagefault(inode->i_sb);
 	file_update_time(vmf->vma->vm_file);
+
+	err = ntfs_page_mkwrite_zero_gap(inode, page_start);
+	if (err) {
+		ret = vmf_fs_error(err);
+		goto out;
+	}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
 	ret = iomap_page_mkwrite(vmf, &ntfs_page_mkwrite_iomap_ops, NULL);
 #else
 	ret = iomap_page_mkwrite(vmf, &ntfs_page_mkwrite_iomap_ops);
 #endif
+
+out:
 	sb_end_pagefault(inode->i_sb);
 	return ret;
 }

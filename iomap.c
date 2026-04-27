@@ -820,8 +820,11 @@ static int ntfs_write_da_iomap_begin_non_resident(struct inode *inode,
 
 	if (ntfs_iomap_flags & NTFS_IOMAP_FLAGS_MKWRITE &&
 	    iomap->offset + iomap->length > ni->initialized_size) {
-		err = ntfs_attr_set_initialized_size(ni, iomap->offset +
-				iomap->length);
+		loff_t new_init_size = min_t(loff_t, i_size_read(inode),
+					    iomap->offset + iomap->length);
+
+		if (new_init_size > ni->initialized_size)
+			err = ntfs_attr_set_initialized_size(ni, new_init_size);
 	}
 
 	return err;
