@@ -652,6 +652,69 @@ err_corrupt_attr:
 	return 0;	/* NO, it is not an extended system file. */
 }
 
+static int ntfs_count_non_dos_links(struct ntfs_attr_search_ctx *ctx)
+{
+	int nr_links, real_links = 0, err;
+
+	ntfs_attr_reinit_search_ctx(ctx);
+
+	nr_links = le16_to_cpu(ctx->mrec->link_count);
+
+	while (!(err = ntfs_attr_lookup(AT_FILE_NAME, NULL, 0, 0, 0, NULL, 0,
+			ctx))) {
+		struct file_name_attr *file_name_attr;
+		struct attr_record *attr = ctx->attr;
+		u8 *p, *p2;
+
+		nr_links--;
+		p = (u8 *)attr + le32_to_cpu(attr->length);
+		if (p < (u8 *)ctx->mrec ||
+		    (u8 *)p > (u8 *)ctx->mrec + le32_to_cpu(ctx->mrec->bytes_in_use)) {
+err_corrupt_attr:
+			ntfs_error(ctx->ntfs_ino->vol->sb,
+					"Corrupt file name attribute. You should run chkdsk.");
+			return -EIO;
+		}
+		if (attr->non_resident) {
+			ntfs_error(ctx->ntfs_ino->vol->sb,
+					"Non-resident file name. You should run chkdsk.");
+			return -EIO;
+		}
+		if (attr->flags) {
+			ntfs_error(ctx->ntfs_ino->vol->sb,
+					"File name with invalid flags. You should run chkdsk.");
+			return -EIO;
+		}
+		if (!(attr->data.resident.flags & RESIDENT_ATTR_IS_INDEXED)) {
+			ntfs_error(ctx->ntfs_ino->vol->sb,
+					"Unindexed file name. You should run chkdsk.");
+			return -EIO;
+		}
+		file_name_attr = (struct file_name_attr *)((u8 *)attr +
+				le16_to_cpu(attr->data.resident.value_offset));
+		p2 = (u8 *)file_name_attr +
+				le32_to_cpu(attr->data.resident.value_length);
+		if (p2 < (u8 *)attr || p2 > p)
+			goto err_corrupt_attr;
+
+		if (file_name_attr->file_name_type != FILE_NAME_DOS)
+			real_links++;
+	}
+	if (unlikely(err != -ENOENT))
+		return err;
+	if (unlikely(nr_links)) {
+		ntfs_error(ctx->ntfs_ino->vol->sb,
+			"Inode hard link count doesn't match number of name attributes. You should run chkdsk.");
+		return -EIO;
+	}
+	if (unlikely(!real_links)) {
+		ntfs_error(ctx->ntfs_ino->vol->sb,
+			"Inode has no non-DOS file name. You should run chkdsk.");
+		return -EIO;
+	}
+	return real_links;
+}
+
 static struct lock_class_key ntfs_dir_inval_lock_key;
 
 void ntfs_set_vfs_operations(struct inode *inode, mode_t mode, dev_t dev)
@@ -775,7 +838,12 @@ static int ntfs_read_locked_inode(struct inode *vi)
 		ntfs_error(vi->i_sb, "Inode link count is 0!");
 		goto unm_err_out;
 	}
-	set_nlink(vi, le16_to_cpu(m->link_count));
+
+	err = ntfs_count_non_dos_links(ctx);
+	if (err < 0)
+		goto unm_err_out;
+	set_nlink(vi, err);
+	ntfs_attr_reinit_search_ctx(ctx);
 
 	/* If read-only, no one gets write permissions. */
 	if (IS_RDONLY(vi))
@@ -916,9 +984,6 @@ skip_attr_list_load:
 		 * options.
 		 */
 		vi->i_mode &= ~vol->dmask;
-		/* Things break without this kludge! */
-		if (vi->i_nlink > 1)
-			set_nlink(vi, 1);
 	} else {
 		if (ni->flags & FILE_ATTR_REPARSE_POINT) {
 			unsigned int mode;

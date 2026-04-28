@@ -818,9 +818,9 @@ static int ntfs_create(struct user_namespace *mnt_userns, struct inode *dir,
 	return 0;
 }
 
-static int ntfs_check_unlinkable_dir(struct ntfs_attr_search_ctx *ctx, struct file_name_attr *fn)
+static int ntfs_check_unlinkable_dir(struct ntfs_attr_search_ctx *ctx)
 {
-	int link_count;
+	int real_links;
 	int ret;
 	struct ntfs_inode *ni = ctx->base_ntfs_ino ? ctx->base_ntfs_ino : ctx->ntfs_ino;
 	struct mft_record *ni_mrec = ctx->base_mrec ? ctx->base_mrec : ctx->mrec;
@@ -829,13 +829,14 @@ static int ntfs_check_unlinkable_dir(struct ntfs_attr_search_ctx *ctx, struct fi
 	if (!ret || ret != -ENOTEMPTY)
 		return ret;
 
-	link_count = le16_to_cpu(ni_mrec->link_count);
+	real_links = VFS_I(ni)->i_nlink;
 	/*
 	 * Directory is non-empty, so we can unlink only if there is more than
-	 * one "real" hard link, i.e. links aren't different DOS and WIN32 names
+	 * one real hard link. VFS i_nlink now tracks only non-DOS FILE_NAME
+	 * attributes for both files and directories, so DOS aliases must not
+	 * affect the non-empty directory unlinkability check.
 	 */
-	if ((link_count == 1) ||
-	    (link_count == 2 && fn->file_name_type == FILE_NAME_DOS)) {
+	if (real_links <= 1) {
 		ret = -ENOTEMPTY;
 		ntfs_debug("Non-empty directory without hard links\n");
 		goto no_hardlink;
@@ -978,7 +979,7 @@ search:
 		goto err_out;
 	}
 
-	err = ntfs_check_unlinkable_dir(actx, fn);
+	err = ntfs_check_unlinkable_dir(actx);
 	if (err)
 		goto err_out;
 
@@ -992,8 +993,6 @@ search:
 
 	ni_mrec = actx->base_mrec ? actx->base_mrec : actx->mrec;
 	ni_mrec->link_count = cpu_to_le16(le16_to_cpu(ni_mrec->link_count) - 1);
-	if (!S_ISDIR(VFS_I(ni)->i_mode))
-		drop_nlink(VFS_I(ni));
 
 	mark_mft_record_dirty(ni);
 	if (looking_for_dos_name) {
@@ -1004,11 +1003,12 @@ search:
 	}
 
 	/*
-	 * For directories, Drop VFS nlink only when mft record link count
-	 * becomes zero. Because we fixes VFS nlink to 1 for directories.
+	 * The WIN32+DOS pair reaches this point only after the DOS alias was
+	 * removed and the corresponding non-DOS name is being removed now.
+	 * Therefore a single drop_nlink() here keeps VFS i_nlink aligned with
+	 * the non-DOS FILE_NAME count without needing to inspect fn type.
 	 */
-	if (S_ISDIR(VFS_I(ni)->i_mode) && !le16_to_cpu(ni_mrec->link_count))
-		drop_nlink(VFS_I(ni));
+	drop_nlink(VFS_I(ni));
 
 	/*
 	 * If hard link count is not equal to zero then we are done. In other
@@ -1348,8 +1348,7 @@ static int __ntfs_link(struct ntfs_inode *ni, struct ntfs_inode *dir_ni,
 	}
 	/* Increment hard links count. */
 	ni_mrec->link_count = cpu_to_le16(le16_to_cpu(ni_mrec->link_count) + 1);
-	if (!S_ISDIR(vi->i_mode))
-		inc_nlink(VFS_I(ni));
+	inc_nlink(VFS_I(ni));
 
 	/* Done! */
 	mark_mft_record_dirty(ni);
