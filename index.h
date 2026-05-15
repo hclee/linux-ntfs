@@ -92,6 +92,9 @@ struct ntfs_index_context {
 int ntfs_index_header_inconsistent(struct ntfs_volume *vol,
 				   const struct index_header *ih,
 				   u32 bytes_available, u64 inum);
+int ntfs_index_entries_inconsistent(const struct index_header *ih,
+		u32 bytes_available, struct ntfs_volume *vol,
+		__le32 collation_rule, u64 inum);
 int ntfs_index_entry_inconsistent(struct ntfs_index_context *icx, struct ntfs_volume *vol,
 		const struct index_entry *ie, __le32 collation_rule, u64 inum);
 struct ntfs_index_context *ntfs_index_ctx_get(struct ntfs_inode *ni, __le16 *name,

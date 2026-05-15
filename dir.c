@@ -141,10 +141,6 @@ u64 ntfs_lookup_inode_by_name(struct ntfs_inode *dir_ni, const __le16 *uname,
 		/* Key length should not be zero if it is not last entry. */
 		if (!ie->key_length)
 			goto dir_err_out;
-		/* Check the consistency of an index entry */
-		if (ntfs_index_entry_inconsistent(NULL, vol, ie, COLLATION_FILE_NAME,
-				dir_ni->mft_no))
-			goto dir_err_out;
 		/*
 		 * We perform a case sensitive comparison and if that matches
 		 * we are done and return the mft reference of the inode (i.e.
@@ -406,6 +402,13 @@ fast_descend_into_child_node:
 					     dir_ni->mft_no);
 	if (err)
 		goto unm_err_out;
+	err = ntfs_index_entries_inconsistent(&ia->index,
+					 dir_ni->itype.index.block_size -
+					 offsetof(struct index_block, index),
+					 vol, COLLATION_FILE_NAME,
+					 dir_ni->mft_no);
+	if (err)
+		goto unm_err_out;
 	index_end = (u8 *)&ia->index + le32_to_cpu(ia->index.index_length);
 	/* The first index entry. */
 	ie = (struct index_entry *)((u8 *)&ia->index +
@@ -433,10 +436,6 @@ fast_descend_into_child_node:
 			break;
 		/* Key length should not be zero if it is not last entry. */
 		if (!ie->key_length)
-			goto unm_err_out;
-		/* Check the consistency of an index entry */
-		if (ntfs_index_entry_inconsistent(NULL, vol, ie, COLLATION_FILE_NAME,
-				dir_ni->mft_no))
 			goto unm_err_out;
 		/*
 		 * We perform a case sensitive comparison and if that matches
@@ -920,6 +919,7 @@ static int ntfs_readdir(struct file *file, struct dir_context *actor)
 		ictx->vcn_size_bits = vol->cluster_size_bits;
 	else
 		ictx->vcn_size_bits = NTFS_BLOCK_SIZE_BITS;
+	ictx->cr = ir->collation_rule;
 
 	/* The first index entry. */
 	next = (struct index_entry *)((u8 *)&ir->index +
@@ -957,13 +957,6 @@ static int ntfs_readdir(struct file *file, struct dir_context *actor)
 		if (!next)
 			break;
 nextdir:
-		/* Check the consistency of an index entry */
-		if (ntfs_index_entry_inconsistent(ictx, vol, next, COLLATION_FILE_NAME,
-					ndir->mft_no)) {
-			err = -EIO;
-			goto out;
-		}
-
 		if (ie_pos < actor->pos) {
 			ie_pos += le16_to_cpu(next->length);
 			continue;

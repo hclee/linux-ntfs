@@ -350,6 +350,37 @@ int ntfs_index_header_inconsistent(struct ntfs_volume *vol,
 	return 0;
 }
 
+int ntfs_index_entries_inconsistent(const struct index_header *ih,
+		u32 bytes_available, struct ntfs_volume *vol,
+		__le32 collation_rule, u64 inum)
+{
+	struct index_entry *ie;
+	u8 *index_end = (u8 *)ih + le32_to_cpu(ih->index_length);
+
+	for (ie = ntfs_ie_get_first((struct index_header *)ih); ;
+		ie = ntfs_ie_get_next(ie)) {
+		if ((u8 *)ie + sizeof(struct index_entry_header) > index_end ||
+		    (u8 *)ie + le16_to_cpu(ie->length) > index_end) {
+			ntfs_error(vol->sb,
+				   "Index entry out of bounds in inode %llu.",
+				   (unsigned long long)inum);
+			return -EIO;
+		}
+
+		if (ntfs_ie_end(ie))
+			break;
+
+		if (!ie->key_length)
+			return -EIO;
+
+		if (ntfs_index_entry_inconsistent(NULL, vol, ie,
+						     collation_rule, inum))
+			return -EIO;
+	}
+
+	return 0;
+}
+
 /*
  *  Find the last entry in the index block
  */
@@ -535,6 +566,11 @@ static int ntfs_index_block_inconsistent(struct ntfs_index_context *icx,
 					   icx->block_size -
 					   offsetof(struct index_block, index),
 					   inum))
+		return -1;
+	if (ntfs_index_entries_inconsistent(&ib->index,
+					    icx->block_size -
+					    offsetof(struct index_block, index),
+					    icx->idx_ni->vol, icx->cr, inum))
 		return -1;
 
 	return 0;
