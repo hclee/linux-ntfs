@@ -92,6 +92,6 @@ struct runlist_element *ntfs_rl_punch_hole(struct runlist_element *dst_rl, int d
 struct runlist_element *ntfs_rl_collapse_range(struct runlist_element *dst_rl, int dst_cnt,
 		s64 start_vcn, s64 len, struct runlist_element **punch_rl,
 		size_t *new_rl_cnt);
-struct runlist_element *ntfs_rl_realloc(struct runlist_element *rl, int old_size,
-		int new_size);
+struct runlist_element *ntfs_rl_realloc(struct runlist_element *rl,
+					size_t old_size, size_t new_size);
 #endif /* _LINUX_NTFS_RUNLIST_H */

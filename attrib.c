@@ -4600,7 +4600,7 @@ static int ntfs_non_resident_attr_expand(struct ntfs_inode *ni, const s64 newsiz
 		if ((ni->type == AT_DATA && (vol->major_ver >= 3 || !NInoSparseDisabled(ni))) &&
 		    (holes != HOLES_NO)) {
 			if (NInoCompressed(ni)) {
-				int last = 0, i = 0;
+				size_t last, i, new_count;
 				s64 alloc_size;
 				u64 more_entries = round_up(first_free_vcn -
 						 ntfs_bytes_to_cluster(vol, ni->allocated_size),
@@ -4608,18 +4608,29 @@ static int ntfs_non_resident_attr_expand(struct ntfs_inode *ni, const s64 newsiz
 
 				do_div(more_entries, ni->itype.compressed.block_clusters);
 
-				while (ni->runlist.rl[last].length)
-					last++;
+				if (unlikely(!ni->runlist.count ||
+					     ni->runlist.rl[ni->runlist.count - 1].length)) {
+					err = -EIO;
+					goto put_err_out;
+				}
+				last = ni->runlist.count - 1;
 
-				rl = ntfs_rl_realloc(ni->runlist.rl, last + 1,
-						last + more_entries + 1);
+				if (more_entries > SIZE_MAX ||
+				    check_add_overflow(ni->runlist.count,
+						       (size_t)more_entries, &new_count)) {
+					err = -EOVERFLOW;
+					goto put_err_out;
+				}
+
+				rl = ntfs_rl_realloc(ni->runlist.rl,
+						     ni->runlist.count, new_count);
 				if (IS_ERR(rl)) {
-					err = -ENOMEM;
+					err = PTR_ERR(rl);
 					goto put_err_out;
 				}
 
 				alloc_size = ni->allocated_size;
-				while (i++ < more_entries) {
+				for (i = 0; i < more_entries; i++) {
 					rl[last].vcn = ntfs_bytes_to_cluster(vol,
 							round_up(alloc_size, vol->cluster_size));
 					rl[last].length = ni->itype.compressed.block_clusters -
@@ -4635,7 +4646,7 @@ static int ntfs_non_resident_attr_expand(struct ntfs_inode *ni, const s64 newsiz
 				rl[last].length = 0;
 
 				ni->runlist.rl = rl;
-				ni->runlist.count += more_entries;
+				ni->runlist.count = new_count;
 			} else {
 				rl = kmalloc(sizeof(struct runlist_element) * 2, GFP_NOFS);
 				if (!rl) {

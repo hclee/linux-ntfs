@@ -72,13 +72,11 @@ static inline void ntfs_rl_mc(struct runlist_element *dstbase, int dst,
  * On error, return -errno.
  */
 static inline struct runlist_element *ntfs_rl_realloc_gfp(struct runlist_element *rl,
-		int old_size, int new_size, gfp_t gfp)
+							  size_t old_size,
+							  size_t new_size, gfp_t gfp)
 {
 	struct runlist_element *new_rl;
 	size_t new_bytes;
-
-	if (old_size < 0 || new_size < 0)
-		return ERR_PTR(-EINVAL);
 
 	if (old_size == new_size)
 		return rl;
@@ -106,7 +104,7 @@ static inline struct runlist_element *ntfs_rl_realloc_gfp(struct runlist_element
 }
 
 struct runlist_element *ntfs_rl_realloc(struct runlist_element *rl,
-		int old_size, int new_size)
+					size_t old_size, size_t new_size)
 {
 	return ntfs_rl_realloc_gfp(rl, old_size, new_size, GFP_NOFS);
 }
@@ -133,7 +131,7 @@ struct runlist_element *ntfs_rl_realloc(struct runlist_element *rl,
  * On error, return -errno.
  */
 static inline struct runlist_element *ntfs_rl_realloc_nofail(struct runlist_element *rl,
-		int old_size, int new_size)
+							     size_t old_size, size_t new_size)
 {
 	return ntfs_rl_realloc_gfp(rl, old_size, new_size,
 			GFP_NOFS | __GFP_NOFAIL);
