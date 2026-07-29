@@ -1239,7 +1239,7 @@ static int ntfs_external_attr_find(const __le32 type,
 	u32 al_name_len;
 	u32 attr_len, mft_free_len;
 	bool is_first_search = false;
-	bool attr_list_locked = true;
+	bool attr_list_locked = false;
 	int err = 0;
 	static const char *es = " Unmount and run chkdsk.";
 
@@ -1256,6 +1256,7 @@ static int ntfs_external_attr_find(const __le32 type,
 		goto not_found;
 	vol = base_ni->vol;
 	down_read(&base_ni->attr_list_lock);
+	attr_list_locked = true;
 	al_start = base_ni->attr_list;
 	al_end = al_start + base_ni->attr_list_size;
 	if (!ctx->al_cursor.valid ||
@@ -1653,9 +1654,11 @@ corrupt:
 		NVolSetErrors(vol);
 	return err;
 not_found:
-	ntfs_attrlist_capture_insert(ctx, base_ni, al_entry, al_start, al_end);
-	if (attr_list_locked)
+	if (attr_list_locked) {
+		ntfs_attrlist_capture_insert(ctx, base_ni, al_entry, al_start,
+					     al_end);
 		up_read(&base_ni->attr_list_lock);
+	}
 	/*
 	 * If we were looking for AT_END, we reset the search context @ctx and
 	 * use ntfs_attr_find() to seek to the end of the base mft record.
