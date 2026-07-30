@@ -285,6 +285,30 @@ static int ntfs_setattr_size(struct inode *vi, struct iattr *attr)
 		return err;
 
 	inode_dio_wait(vi);
+
+	if (attr->ia_size < old_size) {
+		/*
+		 * Flush and wait for writeback of the range being truncated
+		 * away *before* we ever touch the runlist/mrec_lock below.
+		 *
+		 * ntfs_non_resident_attr_shrink() (attrib.c) calls
+		 * truncate_inode_pages() while holding ni->mrec_lock, to drop
+		 * folios that now lie beyond the shrunk attribute. If any of
+		 * those folios are still under writeback, that call blocks in
+		 * folio_wait_writeback() -- but completing that writeback
+		 * requires __ntfs_write_iomap_begin() to acquire the very
+		 * same mrec_lock, which deadlocks forever (confirmed via
+		 * hung-task: fsx stuck in truncate_inode_pages_range() holding
+		 * mrec_lock, the writeback kworker stuck acquiring mrec_lock
+		 * in __ntfs_write_iomap_begin()). Doing the flush+wait here,
+		 * before mrec_lock is taken, avoids ever hitting that wait
+		 * while the lock is held.
+		 */
+		err = filemap_write_and_wait_range(vi->i_mapping, attr->ia_size,
+				LLONG_MAX);
+		if (err)
+			return err;
+	}
 	/* Serialize against page faults */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 19, 0)
 	if (NInoNonResident(NTFS_I(vi)) && attr->ia_size < old_size) {
