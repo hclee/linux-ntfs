@@ -3991,7 +3991,14 @@ static int ntfs_attr_update_meta(struct attr_record *a, struct ntfs_inode *ni,
 				goto out;
 			}
 
-			err = ntfs_attrlist_update(base_ni);
+			/*
+			 * This path is reached both when
+			 * ntfs_attr_update_mapping_pairs() holds the persist lock for
+			 * non-$ATTRIBUTE_LIST attributes and when it is invoked
+			 * underneath ntfs_attrlist_update() for the $ATTRIBUTE_LIST
+			 * attribute itself.  In both cases the lock is already held.
+			 */
+			err = ntfs_attrlist_update_locked(base_ni);
 			if (err)
 				goto out;
 			err = -EAGAIN;
@@ -4386,7 +4393,7 @@ retry:
 	}
 
 	if (attrlist_changed) {
-		err = ntfs_attrlist_update(base_ni);
+		err = ntfs_attrlist_update_locked(base_ni);
 	}
 	if (attrlist_locked) {
 		mutex_unlock(&base_ni->attr_list_persist_lock);

@@ -51,7 +51,13 @@ int ntfs_attrlist_need(struct ntfs_inode *ni)
 	return 0;
 }
 
-int ntfs_attrlist_update(struct ntfs_inode *base_ni)
+/*
+ * ntfs_attrlist_update_locked - persist the in-memory attribute list to disk
+ * @base_ni:	base ntfs inode containing the attribute list
+ *
+ * Caller must hold @base_ni->attr_list_persist_lock.
+ */
+int ntfs_attrlist_update_locked(struct ntfs_inode *base_ni)
 {
 	struct inode *attr_vi;
 	struct ntfs_inode *attr_ni;
@@ -112,6 +118,23 @@ int ntfs_attrlist_update(struct ntfs_inode *base_ni)
 }
 
 /*
+ * ntfs_attrlist_update - persist the in-memory attribute list to disk
+ * @base_ni:	base ntfs inode containing the attribute list
+ *
+ * Serialize the persist against concurrent attribute-list replacement
+ * transactions.
+ */
+int ntfs_attrlist_update(struct ntfs_inode *base_ni)
+{
+	int err;
+
+	mutex_lock(&base_ni->attr_list_persist_lock);
+	err = ntfs_attrlist_update_locked(base_ni);
+	mutex_unlock(&base_ni->attr_list_persist_lock);
+	return err;
+}
+
+/*
  * ntfs_attrlist_entry_add - add an attribute list attribute entry
  * @ni:	opened ntfs inode, which contains that attribute
  * @attr: attribute record to add to attribute list
@@ -155,6 +178,16 @@ int ntfs_attrlist_entry_add(struct ntfs_inode *ni, struct attr_record *attr)
 		return -ENOENT;
 	}
 	mutex_lock(&ni->attr_list_persist_lock);
+
+	/*
+	 * Another thread may have removed the attribute list while we were
+	 * waiting for the mutex.  Bail out instead of spinning in
+	 * retry_lookup with a stale (or freed) buffer.
+	 */
+	if (!NInoAttrList(ni) || !ni->attr_list) {
+		err = -ENOENT;
+		goto err_out;
+	}
 
 	/* Determine size of new attribute list entry. */
 	entry_len = (sizeof(struct attr_list_entry) + sizeof(__le16) *
@@ -265,7 +298,7 @@ retry_lookup:
 	ntfs_attr_put_search_ctx(ctx);
 	ctx = NULL;
 
-	err = ntfs_attrlist_update(ni);
+	err = ntfs_attrlist_update_locked(ni);
 	if (err) {
 		down_write(&ni->attr_list_lock);
 		if (ni->attr_list == new_al) {
@@ -329,6 +362,15 @@ int ntfs_attrlist_entry_rm(struct ntfs_attr_search_ctx *ctx)
 	}
 	mutex_lock(&base_ni->attr_list_persist_lock);
 
+	/*
+	 * Another thread may have removed the attribute list while we were
+	 * waiting for the mutex.
+	 */
+	if (!NInoAttrList(base_ni) || !base_ni->attr_list) {
+		err = -ENOENT;
+		goto out_unlock;
+	}
+
 	down_write(&base_ni->attr_list_lock);
 	ale = ntfs_attrlist_find_exact_locked(base_ni, &ctx->al_exact);
 	if (!ale) {
@@ -358,7 +400,7 @@ int ntfs_attrlist_entry_rm(struct ntfs_attr_search_ctx *ctx)
 	base_ni->attr_list_gen++;
 	up_write(&base_ni->attr_list_lock);
 
-	err = ntfs_attrlist_update(base_ni);
+	err = ntfs_attrlist_update_locked(base_ni);
 	if (err) {
 		rollback = false;
 		down_write(&base_ni->attr_list_lock);
