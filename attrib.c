@@ -5860,14 +5860,14 @@ int ntfs_attr_fallocate(struct ntfs_inode *ni, loff_t start, loff_t byte_len, bo
 				if (err)
 					goto out;
 
-				if (balloc) {
+				//if (balloc) {
 					err = ntfs_dio_zero_range(VFS_I(ni),
 								  lcn << vol->cluster_size_bits,
 								  alloc_cnt <<
 								  vol->cluster_size_bits);
 					if (err > 0)
 						goto out;
-				}
+				//}
 
 				if (signal_pending(current))
 					goto out;
