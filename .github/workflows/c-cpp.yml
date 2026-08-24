@@ -36,6 +36,7 @@ jobs:
         cd ../linux-6.1.161/
         yes "" | make oldconfig > /dev/null
         echo 'CONFIG_NTFS_FS=m' >> .config
+        echo 'CONFIG_NTFS_FS_WOF_COMPRESSION=y' >> .config
         make -j$((`nproc`+1)) KBUILD_MODPOST_WARN=1 KBUILD_MODPOST_NOFINAL=1 fs/ntfs/ntfs.ko
         cd ../linux-ntfs
         rm -rf ../linux-6.1.161/
@@ -50,6 +51,7 @@ jobs:
         cd ../linux-6.6.122/
         yes "" | make oldconfig > /dev/null
         echo 'CONFIG_NTFS_FS=m' >> .config
+        echo 'CONFIG_NTFS_FS_WOF_COMPRESSION=y' >> .config
         make -j$((`nproc`+1)) KBUILD_MODPOST_WARN=1 KBUILD_MODPOST_NOFINAL=1 fs/ntfs/ntfs.ko
         cd ../linux-ntfs
         rm -rf ../linux-6.6.122/
@@ -66,6 +68,7 @@ jobs:
         sed -i '/source "fs\/fat\/Kconfig"/a source "fs\/ntfs\/Kconfig"' fs/Kconfig
         sed -i '/obj-\$(CONFIG_EXFAT_FS).*+= exfat\//i obj-$(CONFIG_NTFS_FS)       += ntfs/' fs/Makefile
         echo 'CONFIG_NTFS_FS=m' >> .config
+        echo 'CONFIG_NTFS_FS_WOF_COMPRESSION=y' >> .config
         make -j$((`nproc`+1)) KBUILD_MODPOST_WARN=1 KBUILD_MODPOST_NOFINAL=1 fs/ntfs/ntfs.ko
         cd ../linux-ntfs
         rm -rf ../linux-6.12.68/
@@ -82,6 +85,7 @@ jobs:
         sed -i '/source "fs\/fat\/Kconfig"/a source "fs\/ntfs\/Kconfig"' fs/Kconfig
         sed -i '/obj-\$(CONFIG_EXFAT_FS).*+= exfat\//i obj-$(CONFIG_NTFS_FS)       += ntfs/' fs/Makefile
         echo 'CONFIG_NTFS_FS=m' >> .config
+        echo 'CONFIG_NTFS_FS_WOF_COMPRESSION=y' >> .config
         echo 'CONFIG_GENDWARFKSYMS=n' >> .config
         make -j$((`nproc`+1)) KBUILD_MODPOST_WARN=1 KBUILD_MODPOST_NOFINAL=1 fs/ntfs/ntfs.ko
         cd ../linux-ntfs
