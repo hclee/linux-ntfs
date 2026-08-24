@@ -11,7 +11,12 @@
 #include <linux/pagemap.h>
 #include <linux/sched/mm.h>
 #include <linux/slab.h>
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
 #include <linux/unaligned.h>
+#else
+#include <asm/unaligned.h>
+#endif
 #include <linux/vmalloc.h>
 
 #include "ntfs.h"
@@ -221,9 +226,14 @@ static int ntfs_bdev_read_from_rl(struct ntfs_volume *vol,
 				err = -EOVERFLOW;
 				goto out_unlock;
 			}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 			err = ntfs_bdev_read(vol->sb->s_bdev,
 					     (char *)buf + buf_off,
 					     (loff_t)byte_off, byte_len);
+#else
+			err = ntfs_dev_read(vol->sb, (char *)buf + buf_off,
+					    (loff_t)byte_off, byte_len);
+#endif
 			if (err)
 				goto out_unlock;
 		}
@@ -409,7 +419,7 @@ static int ntfs_wof_collect_dest(struct address_space *mapping,
 				return PTR_ERR(folio);
 			is_target = false;
 			if (folio_pos(folio) < chunk_start ||
-			    folio_next_pos(folio) > chunk_end) {
+			    folio_pos(folio) + folio_size(folio) > chunk_end) {
 				folio_unlock(folio);
 				folio_put(folio);
 				return -EAGAIN;
@@ -539,6 +549,26 @@ static int ntfs_wof_try_direct(struct ntfs_wof_workspace *ws,
 					     chunk_end, src, src_len, dst_len);
 }
 
+static void ntfs_wof_copy_to_folio(struct folio *folio, size_t offset,
+				   const u8 *src, size_t len)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	memcpy_to_folio(folio, offset, src, len);
+#else
+	while (len) {
+		size_t bytes = min_t(size_t, len,
+				     PAGE_SIZE - offset_in_page(offset));
+		void *addr = kmap_local_folio(folio, offset);
+
+		memcpy(addr, src, bytes);
+		kunmap_local(addr);
+		offset += bytes;
+		src += bytes;
+		len -= bytes;
+	}
+#endif
+}
+
 int ntfs_read_wof_compressed_block(struct folio *folio)
 {
 	struct address_space *mapping = folio->mapping;
@@ -650,9 +680,9 @@ int ntfs_read_wof_compressed_block(struct folio *folio)
 		copy_start = max_t(loff_t, folio_start, chunk_file_offset);
 		copy_end = min_t(loff_t, folio_end,
 				 chunk_file_offset + decomp_size);
-		memcpy_to_folio(folio, copy_start - folio_start,
-				ws->output + copy_start - chunk_file_offset,
-				copy_end - copy_start);
+		ntfs_wof_copy_to_folio(folio, copy_start - folio_start,
+				       ws->output + copy_start - chunk_file_offset,
+				       copy_end - copy_start);
 	}
 
 	if (folio_end > i_size)
