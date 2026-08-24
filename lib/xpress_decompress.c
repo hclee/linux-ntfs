@@ -111,7 +111,11 @@ int xpress_decompress(struct xpress_decompressor *d,
 
 struct xpress_decompressor *xpress_allocate_decompressor(void)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
 	return kmalloc_obj(struct xpress_decompressor, GFP_NOFS);
+#else
+	return kmalloc(sizeof(struct xpress_decompressor), GFP_NOFS);
+#endif
 }
 
 void xpress_free_decompressor(struct xpress_decompressor *d)

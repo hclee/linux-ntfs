@@ -601,7 +601,11 @@ int lzx_decompress(struct lzx_decompressor *d, const void *compressed_data,
 
 struct lzx_decompressor *lzx_allocate_decompressor(void)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
 	return kmalloc_obj(struct lzx_decompressor, GFP_NOFS);
+#else
+	return kmalloc(sizeof(struct lzx_decompressor), GFP_NOFS);
+#endif
 }
 
 void lzx_free_decompressor(struct lzx_decompressor *d)
