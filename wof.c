@@ -226,7 +226,7 @@ static int ntfs_bdev_read_from_rl(struct ntfs_volume *vol,
 				err = -EOVERFLOW;
 				goto out_unlock;
 			}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
 			err = ntfs_bdev_read(vol->sb->s_bdev,
 					     (char *)buf + buf_off,
 					     (loff_t)byte_off, byte_len);
