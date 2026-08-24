@@ -601,7 +601,7 @@ int lzx_decompress(struct lzx_decompressor *d, const void *compressed_data,
 
 struct lzx_decompressor *lzx_allocate_decompressor(void)
 {
-	return kmalloc_obj(struct lzx_decompressor, GFP_NOFS);
+	return kmalloc(sizeof(struct lzx_decompressor), GFP_NOFS);
 }
 
 void lzx_free_decompressor(struct lzx_decompressor *d)

@@ -111,7 +111,7 @@ int xpress_decompress(struct xpress_decompressor *d,
 
 struct xpress_decompressor *xpress_allocate_decompressor(void)
 {
-	return kmalloc_obj(struct xpress_decompressor, GFP_NOFS);
+	return kmalloc(sizeof(struct xpress_decompressor), GFP_NOFS);
 }
 
 void xpress_free_decompressor(struct xpress_decompressor *d)
