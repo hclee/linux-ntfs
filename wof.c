@@ -647,7 +647,11 @@ int ntfs_read_wof_compressed_block(struct folio *folio)
 	struct ntfs_wof_workspace *ws;
 	loff_t i_size = i_size_read(VFS_I(ni));
 	loff_t folio_start = folio_pos(folio);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
 	loff_t folio_end = folio_next_pos(folio);
+#else
+	loff_t folio_end = folio_pos(folio) + folio_size(folio);
+#endif
 	char *chunk_mem;
 	u32 decomp_size;
 	u64 chunk_count, chunk_idx, last_chunk, chunk_offset;
