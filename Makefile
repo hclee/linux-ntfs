@@ -13,6 +13,8 @@ ntfs-$(CONFIG_NTFS_FS_WOF_COMPRESSION) += wof.o \
 
 ccflags-$(CONFIG_NTFS_DEBUG) += -DDEBUG
 ccflags-y += -DCONFIG_NTFS_FS_POSIX_ACL
+ccflags-$(CONFIG_NTFS_FS_WOF_COMPRESSION) += \
+	-DCONFIG_NTFS_FS_WOF_COMPRESSION
 else
 # Called from external kernel module build
 
@@ -22,6 +24,8 @@ MDIR	?= /lib/modules/${KERNELRELEASE}
 PWD	:= $(shell pwd)
 
 export CONFIG_NTFS_FS := m
+CONFIG_NTFS_FS_WOF_COMPRESSION ?= y
+export CONFIG_NTFS_FS_WOF_COMPRESSION
 
 all:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
