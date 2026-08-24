@@ -312,7 +312,7 @@ int ntfs_parse_reparse(struct ntfs_inode *ni, unsigned int *mode)
 	}
 	if (!valid_reparse_data(ni, reparse_attr, attr_size)) {
 		ntfs_error(ni->vol->sb, "Invalid reparse point.");
-		err = -EFSCORRUPTED;
+		err = -EIO;
 		goto out;
 	}
 
