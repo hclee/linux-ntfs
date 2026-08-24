@@ -231,6 +231,15 @@ static int ntfs_readpage(struct file *file, struct page *page)
 			BUG_ON(ni->type != AT_DATA);
 			BUG_ON(ni->name_len);
 			return ntfs_read_compressed_block(page);
+		} else if (NInoWofCompressed(ni)) {
+			BUG_ON(ni->type != AT_DATA);
+			BUG_ON(ni->name_len);
+#ifdef CONFIG_NTFS_FS_WOF_COMPRESSION
+			return ntfs_read_wof_compressed_block(folio);
+#else
+			unlock_page(page);
+			return -EOPNOTSUPP;
+#endif
 		}
 	}
 #endif
