@@ -122,19 +122,17 @@ static int ntfs_get_ea(struct inode *inode, const char *name, size_t name_len,
 
 	p_ea_info = ntfs_attr_readall(ni, AT_EA_INFORMATION, NULL, 0,
 			&ea_info_size);
-	if (IS_ERR(p_ea_info))
-		return PTR_ERR(p_ea_info);
-	if (ea_info_size != sizeof(struct ea_information)) {
+	if (!p_ea_info || ea_info_size != sizeof(struct ea_information)) {
 		kvfree(p_ea_info);
-		return -EIO;
+		return -ENODATA;
 	}
 
 	ea_info_qlen = le32_to_cpu(p_ea_info->ea_query_length);
 	kvfree(p_ea_info);
 
 	ea_buf = ntfs_attr_readall(ni, AT_EA, NULL, 0, &all_ea_size);
-	if (IS_ERR(ea_buf))
-		return PTR_ERR(ea_buf);
+	if (!ea_buf)
+		return -ENODATA;
 
 	if (ea_info_qlen > all_ea_size) {
 		err = -EIO;
@@ -210,22 +208,10 @@ static int ntfs_set_ea(struct inode *inode, const char *name, size_t name_len,
 	if (ntfs_attr_exist(ni, AT_EA_INFORMATION, AT_UNNAMED, 0)) {
 		p_ea_info = ntfs_attr_readall(ni, AT_EA_INFORMATION, NULL, 0,
 						&ea_info_size);
-		if (IS_ERR(p_ea_info)) {
-			err = PTR_ERR(p_ea_info);
-			p_ea_info = NULL;
+		if (!p_ea_info || ea_info_size != sizeof(struct ea_information))
 			goto out;
-		}
-		if (ea_info_size != sizeof(struct ea_information)) {
-			err = -EIO;
-			goto out;
-		}
 
 		ea_buf = ntfs_attr_readall(ni, AT_EA, NULL, 0, &all_ea_size);
-		if (IS_ERR(ea_buf)) {
-			err = PTR_ERR(ea_buf);
-			ea_buf = NULL;
-			goto out;
-		}
 		if (!ea_buf) {
 			ea_info_qsize = 0;
 			kvfree(p_ea_info);
@@ -538,24 +524,14 @@ ssize_t ntfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	mutex_lock(&NTFS_I(inode)->mrec_lock);
 	ea_info = ntfs_attr_readall(ni, AT_EA_INFORMATION, NULL, 0,
 			&ea_info_size);
-	if (IS_ERR(ea_info)) {
-		err = PTR_ERR(ea_info);
-		ea_info = NULL;
+	if (!ea_info || ea_info_size != sizeof(struct ea_information))
 		goto out;
-	}
-	if (ea_info_size != sizeof(struct ea_information)) {
-		err = -EIO;
-		goto out;
-	}
 
 	ea_info_qsize = le32_to_cpu(ea_info->ea_query_length);
 
 	ea_buf = ntfs_attr_readall(ni, AT_EA, NULL, 0, &ea_buf_size);
-	if (IS_ERR(ea_buf)) {
-		err = PTR_ERR(ea_buf);
-		ea_buf = NULL;
+	if (!ea_buf)
 		goto out;
-	}
 
 	if (ea_info_qsize > ea_buf_size || ea_info_qsize == 0)
 		goto out;

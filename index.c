@@ -1108,8 +1108,8 @@ static s64 ntfs_ibm_get_free(struct ntfs_index_context *icx)
 
 	bm = ntfs_attr_readall(icx->idx_ni, AT_BITMAP,  icx->name, icx->name_len,
 			&size);
-	if (IS_ERR(bm))
-		return PTR_ERR(bm);
+	if (!bm)
+		return -EIO;
 
 	for (byte = 0; byte < size; byte++) {
 		if (bm[byte] == 255)
