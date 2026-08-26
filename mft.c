@@ -1126,7 +1126,7 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	if (ntfs_is_4kn(vol))
+	if (ntfs_is_4kn(vol) && vol->mft_record_size < NTFS_4KN_BLOCK_SIZE)
 		return ntfs_write_mft_record_4kn(ni, m, sync);
 #endif
 
@@ -3693,7 +3693,7 @@ static int ntfs_write_mft_block(struct folio *folio, struct writeback_control *w
 	struct ntfs_volume *vol = ni->vol;
 	u8 *kaddr;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	if (ntfs_is_4kn(vol))
+	if (ntfs_is_4kn(vol) && vol->mft_record_size < NTFS_4KN_BLOCK_SIZE)
 		return ntfs_write_mft_block_4kn(folio, wbc);
 #endif
 	struct ntfs_inode **locked_nis __free(kfree) = kmalloc_array(PAGE_SIZE / NTFS_BLOCK_SIZE,

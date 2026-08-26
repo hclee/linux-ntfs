@@ -75,7 +75,7 @@
 #define NTFS_CLU_TO_POFS(vol, clu) (((u64)(clu) << (vol)->cluster_size_bits) & \
 				    ~PAGE_MASK)
 
-#define NTFS_B_TO_SECTOR(vol, b) ((b) >> ((vol)->sb)->s_blocksize_bits)
+#define NTFS_B_TO_SECTOR(vol, b) ((b) >> NTFS_BLOCK_SIZE_BITS)
 
 enum {
 	NTFS_BLOCK_SIZE		= 512,
@@ -162,7 +162,8 @@ static inline u64 ntfs_cluster_to_poff(const struct ntfs_volume *vol,
 static inline sector_t ntfs_bytes_to_sector(const struct ntfs_volume *vol,
 		u64 bytes)
 {
-	return bytes >> vol->sb->s_blocksize_bits;
+	(void)vol;
+	return bytes >> NTFS_BLOCK_SIZE_BITS;
 }
 
 /* Global variables. */
