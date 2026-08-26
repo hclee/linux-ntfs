@@ -727,6 +727,17 @@ static bool parse_ntfs_boot_sector(struct ntfs_volume *vol,
 		ntfs_warning(vol->sb, "Mft record size (%i) is smaller than the sector size (%i).",
 				vol->mft_record_size, vol->sector_size);
 	}
+	if (bdev_logical_block_size(vol->sb->s_bdev) == NTFS_4KN_BLOCK_SIZE &&
+	    (vol->sector_size != NTFS_4KN_BLOCK_SIZE ||
+	     vol->mft_record_size > NTFS_4KN_BLOCK_SIZE ||
+	     NTFS_4KN_BLOCK_SIZE % vol->mft_record_size ||
+	     vol->cluster_size % NTFS_4KN_BLOCK_SIZE)) {
+		ntfs_error(vol->sb,
+			"Unsupported 4Kn geometry (sector %u, cluster %u, MFT record %u).",
+			vol->sector_size, vol->cluster_size, vol->mft_record_size);
+		return false;
+	}
+
 	clusters_per_index_record = b->clusters_per_index_record;
 	ntfs_debug("clusters_per_index_record = %i (0x%x)",
 			clusters_per_index_record, clusters_per_index_record);
