@@ -1,0 +1,96 @@
+name: NTFS sector-size xfstests
+
+on:
+  push:
+    branches:
+      - fix/4kn
+  workflow_dispatch:
+
+jobs:
+  xfstests:
+    name: generic/013 (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # NTFS sees the same 512-byte logical sector on 512n and 512e.
+          - name: 512e
+            sector_size: 512
+          - name: 4kn
+            sector_size: 4096
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf \
+            build-essential \
+            fio \
+            gawk \
+            git \
+            libacl1-dev \
+            libaio-dev \
+            libattr1-dev \
+            libelf-dev \
+            libgcrypt20-dev \
+            libtool \
+            libtool-bin \
+            linux-headers-$(uname -r) \
+            ntfs-3g \
+            pkg-config \
+            uuid-dev \
+            xfsprogs
+          sudo useradd fsgqa
+          sudo useradd 123456-fsgqa
+
+      - name: Build and load NTFS module
+        run: |
+          make -j"$(nproc)"
+          sudo rmmod ntfs 2>/dev/null || true
+          sudo insmod ntfs.ko
+
+      - name: Build xfstests
+        run: |
+          git clone --depth=1 https://github.com/namjaejeon/exfat-testsuites
+          cd exfat-testsuites
+          tar xzf xfstests-exfat.tgz
+          cd xfstests-exfat
+          make -j"$(nproc)"
+
+      - name: Run generic/013 on ${{ matrix.name }}
+        env:
+          SECTOR_SIZE: ${{ matrix.sector_size }}
+        run: |
+          set -euxo pipefail
+          truncate -s 10G test.img
+          truncate -s 10G scratch.img
+          TEST_DEV=$(sudo losetup --find --show --sector-size "$SECTOR_SIZE" test.img)
+          SCRATCH_DEV=$(sudo losetup --find --show --sector-size "$SECTOR_SIZE" scratch.img)
+          cleanup() {
+            sudo umount /mnt/test /mnt/scratch 2>/dev/null || true
+            sudo losetup -d "$TEST_DEV" 2>/dev/null || true
+            sudo losetup -d "$SCRATCH_DEV" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          test "$(sudo blockdev --getss "$TEST_DEV")" = "$SECTOR_SIZE"
+          test "$(sudo blockdev --getss "$SCRATCH_DEV")" = "$SECTOR_SIZE"
+          sudo mkfs.ntfs -F -s "$SECTOR_SIZE" -c 4096 "$TEST_DEV"
+          sudo mkfs.ntfs -F -s "$SECTOR_SIZE" -c 4096 "$SCRATCH_DEV"
+
+          mkdir -p /mnt/test /mnt/scratch
+          cd exfat-testsuites/xfstests-exfat
+          cp local.config.ntfs local.config
+          {
+            echo "export TEST_DEV=$TEST_DEV"
+            echo "export SCRATCH_DEV=$SCRATCH_DEV"
+            echo "export TEST_DIR=/mnt/test"
+            echo "export SCRATCH_MNT=/mnt/scratch"
+            echo "export FSTYP=ntfs"
+          } >> local.config
+          sudo ./check generic/013
