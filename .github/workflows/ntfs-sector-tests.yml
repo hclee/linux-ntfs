@@ -82,9 +82,10 @@ jobs:
           cd xfstests-exfat
           make -j"$(nproc)"
 
-      - name: Run generic/013 on ${{ matrix.name }}
+      - name: Run full xfstests on ${{ matrix.name }}
         env:
           SECTOR_SIZE: ${{ matrix.sector_size }}
+          RESULT_TAG: ${{ matrix.name }}
         run: |
           set -euxo pipefail
           truncate -s 10G test.img
@@ -103,7 +104,7 @@ jobs:
           sudo mkfs.ntfs -F -s "$SECTOR_SIZE" -c 4096 "$TEST_DEV"
           sudo mkfs.ntfs -F -s "$SECTOR_SIZE" -c 4096 "$SCRATCH_DEV"
 
-          mkdir -p /mnt/test /mnt/scratch
+          sudo mkdir -p /mnt/test /mnt/scratch
           cd exfat-testsuites/xfstests-exfat
           cp local.config.ntfs local.config
           {
@@ -113,4 +114,209 @@ jobs:
             echo "export SCRATCH_MNT=/mnt/scratch"
             echo "export FSTYP=ntfs"
           } >> local.config
-          sudo ./check generic/013
+
+          summary="$GITHUB_WORKSPACE/xfstests-${RESULT_TAG}-summary.txt"
+          log_dir="$GITHUB_WORKSPACE/xfstests-${RESULT_TAG}-logs"
+          mkdir -p "$log_dir"
+          : > "$summary"
+          failed=0
+          tests=(
+            generic/001
+            generic/002
+            generic/005
+            generic/006
+            generic/007
+            generic/011
+            generic/013
+            generic/014
+            generic/020
+            generic/023
+            generic/024
+            generic/028
+            generic/029
+            generic/030
+            generic/035
+            generic/036
+            generic/037
+            generic/067
+            generic/069
+            generic/070
+            generic/074
+            generic/075
+            generic/076
+            generic/080
+            generic/084
+            generic/087
+            generic/088
+            generic/089
+            generic/091
+            generic/095
+            generic/097
+            generic/098
+            generic/100
+            generic/108
+            generic/109
+            generic/112
+            generic/113
+            generic/114
+            generic/117
+            generic/120
+            generic/123
+            generic/124
+            generic/126
+            generic/127
+            generic/129
+            generic/130
+            generic/131
+            generic/132
+            generic/133
+            generic/135
+            generic/141
+            generic/169
+            generic/184
+            generic/192
+            generic/193
+            generic/198
+            generic/207
+            generic/208
+            generic/209
+            generic/210
+            generic/211
+            generic/212
+            generic/215
+            generic/221
+            generic/236
+            generic/239
+            generic/240
+            generic/241
+            generic/245
+            generic/246
+            generic/247
+            generic/248
+            generic/249
+            generic/257
+            generic/263
+            generic/285
+            generic/294
+            generic/306
+            generic/308
+            generic/309
+            generic/310
+            generic/313
+            generic/314
+            generic/317
+            generic/323
+            generic/325
+            generic/337
+            generic/338
+            generic/339
+            generic/340
+            generic/344
+            generic/345
+            generic/346
+            generic/354
+            generic/355
+            generic/378
+            generic/393
+            generic/394
+            generic/401
+            generic/403
+            generic/405
+            generic/406
+            generic/409
+            generic/410
+            generic/411
+            generic/412
+            generic/418
+            generic/423
+            generic/426
+            generic/428
+            generic/430
+            generic/431
+            generic/432
+            generic/433
+            generic/434
+            generic/437
+            generic/438
+            generic/441
+            generic/443
+            generic/448
+            generic/450
+            generic/451
+            generic/452
+            generic/460
+            generic/464
+            generic/465
+            generic/467
+            generic/477
+            generic/478
+            generic/479
+            generic/480
+            generic/481
+            generic/484
+            generic/486
+            generic/490
+            generic/504
+            generic/519
+            generic/523
+            generic/524
+            generic/528
+            generic/531
+            generic/532
+            generic/533
+            generic/535
+            generic/538
+            generic/551
+            generic/557
+            generic/564
+            generic/571
+            generic/591
+            generic/598
+            generic/604
+            generic/609
+            generic/611
+            generic/650
+            generic/040
+            generic/041
+            generic/061
+            generic/062
+            generic/311
+          )
+
+          for test_name in "${tests[@]}"; do
+            test_log="$log_dir/${test_name//\//-}.log"
+            echo "===== $test_name ($RESULT_TAG) =====" | tee "$test_log"
+            set +e
+            sudo ./check "$test_name" 2>&1 | tee -a "$test_log"
+            pipeline_status=("${PIPESTATUS[@]}")
+            set -e
+            test_status="${pipeline_status[0]}"
+            tee_status="${pipeline_status[1]}"
+            if [ "$test_status" -eq 0 ] && [ "$tee_status" -eq 0 ]; then
+              result=PASS
+            else
+              result=FAIL
+              failed=1
+            fi
+            printf '%s %s (check=%s, tee=%s)\n' \
+              "$result" "$test_name" "$test_status" "$tee_status" \
+              | tee -a "$summary"
+          done
+
+          echo "===== $RESULT_TAG xfstests summary ====="
+          cat "$summary"
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::$RESULT_TAG has one or more failed xfstests"
+            exit 1
+          fi
+
+      - name: Upload xfstests logs (${{ matrix.name }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xfstests-${{ matrix.name }}-results
+          if-no-files-found: warn
+          path: |
+            xfstests-${{ matrix.name }}-summary.txt
+            xfstests-${{ matrix.name }}-logs/
+            exfat-testsuites/xfstests-exfat/results/
