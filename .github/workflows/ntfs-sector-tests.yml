@@ -33,18 +33,27 @@ jobs:
             fio \
             gawk \
             git \
+            gzip \
             libacl1-dev \
             libaio-dev \
             libattr1-dev \
             libelf-dev \
             libgcrypt20-dev \
+            libgdbm-dev \
+            libnl-3-dev \
+            libnl-genl-3-dev \
             libtool \
             libtool-bin \
             linux-headers-$(uname -r) \
-            ntfs-3g \
             pkg-config \
+            tar \
             uuid-dev \
+            attr \
+            wget \
+            xfslibs-dev \
             xfsprogs
+          sudo apt-get purge -y libntfs-3g89 ntfs-3g || true
+          test -z "$(command -v mount.ntfs 2>/dev/null || true)"
           sudo useradd fsgqa
           sudo useradd 123456-fsgqa
 
@@ -53,6 +62,17 @@ jobs:
           make -j"$(nproc)"
           sudo rmmod ntfs 2>/dev/null || true
           sudo insmod ntfs.ko
+
+      - name: Build NTFS userspace tools
+        run: |
+          git clone --depth=1 --branch=ntfs-next \
+            https://github.com/ntfsprogs-plus/ntfsprogs-plus
+          cd ntfsprogs-plus
+          ./autogen.sh
+          ./configure
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
 
       - name: Build xfstests
         run: |
