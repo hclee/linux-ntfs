@@ -3273,11 +3273,23 @@ static int ntfs_write_mft_block(struct folio *folio, struct writeback_control *w
 	struct ntfs_inode *ni = NTFS_I(vi);
 	struct ntfs_volume *vol = ni->vol;
 	u8 *kaddr;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+	struct ntfs_inode **locked_nis __free(kfree) =
+		kmalloc_objs(struct ntfs_inode *, PAGE_SIZE / NTFS_BLOCK_SIZE,
+			     GFP_NOFS);
+#else
 	struct ntfs_inode **locked_nis __free(kfree) = kmalloc_array(PAGE_SIZE / NTFS_BLOCK_SIZE,
 							sizeof(struct ntfs_inode *), GFP_NOFS);
+#endif
 	int nr_locked_nis = 0, err = 0, mft_ofs, prev_mft_ofs;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+	struct inode **ref_inos __free(kfree) =
+		kmalloc_objs(struct inode *, PAGE_SIZE / NTFS_BLOCK_SIZE,
+			     GFP_NOFS);
+#else
 	struct inode **ref_inos __free(kfree) = kmalloc_array(PAGE_SIZE / NTFS_BLOCK_SIZE,
 							      sizeof(struct inode *), GFP_NOFS);
+#endif
 	int nr_ref_inos = 0;
 	struct bio *bio = NULL;
 	u64 mft_no;
