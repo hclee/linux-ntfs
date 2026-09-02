@@ -40,7 +40,11 @@ int ntfs_trim_fs(struct ntfs_volume *vol, struct fstrim_range *range)
 			end_cluster = vol->nr_clusters;
 	}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+	ra = kzalloc_obj(*ra, GFP_NOFS);
+#else
 	ra = kzalloc(sizeof(*ra), GFP_NOFS);
+#endif
 	if (!ra)
 		return -ENOMEM;
 

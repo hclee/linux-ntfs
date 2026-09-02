@@ -1664,7 +1664,11 @@ resplit:
 			goto out;
 		}
 	} else {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+		si = kzalloc_obj(struct split_info, GFP_NOFS);
+#else
 		si = kzalloc(sizeof(struct split_info), GFP_NOFS);
+#endif
 		if (!si) {
 			ntfs_ibm_clear(icx, new_vcn);
 			ret = -ENOMEM;

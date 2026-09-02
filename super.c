@@ -2756,7 +2756,11 @@ static int ntfs_init_fs_context(struct fs_context *fc)
 	struct ntfs_volume *vol;
 
 	/* Allocate a new struct ntfs_volume and place it in sb->s_fs_info. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+	vol = kmalloc_obj(struct ntfs_volume, GFP_NOFS);
+#else
 	vol = kmalloc(sizeof(struct ntfs_volume), GFP_NOFS);
+#endif
 	if (!vol)
 		return -ENOMEM;
 
