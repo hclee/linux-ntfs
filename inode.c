@@ -178,9 +178,10 @@ struct inode *ntfs_iget(struct super_block *sb, u64 mft_no)
 	if (vi->i_state & I_NEW) {
 #endif
 		err = ntfs_read_locked_inode(vi);
-		if (err)
+		if (err) {
+			remove_inode_hash(vi);
 			discard_new_inode(vi);
-		else
+		} else
 			unlock_new_inode(vi);
 	}
 	/*
@@ -244,9 +245,10 @@ struct inode *ntfs_attr_iget(struct inode *base_vi, __le32 type,
 	if (vi->i_state & I_NEW) {
 #endif
 		err = ntfs_read_locked_attr_inode(base_vi, vi);
-		if (err)
+		if (err) {
+			remove_inode_hash(vi);
 			discard_new_inode(vi);
-		else
+		} else
 			unlock_new_inode(vi);
 	}
 	/*
@@ -304,9 +306,10 @@ struct inode *ntfs_index_iget(struct inode *base_vi, __le16 *name,
 	if (vi->i_state & I_NEW) {
 #endif
 		err = ntfs_read_locked_index_inode(base_vi, vi);
-		if (err)
+		if (err) {
+			remove_inode_hash(vi);
 			discard_new_inode(vi);
-		else
+		} else
 			unlock_new_inode(vi);
 	}
 	/*
