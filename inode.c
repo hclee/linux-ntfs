@@ -178,17 +178,18 @@ struct inode *ntfs_iget(struct super_block *sb, u64 mft_no)
 	if (vi->i_state & I_NEW) {
 #endif
 		err = ntfs_read_locked_inode(vi);
-		unlock_new_inode(vi);
+		if (err)
+			discard_new_inode(vi);
+		else
+			unlock_new_inode(vi);
 	}
 	/*
 	 * There is no point in keeping bad inodes around. This also
 	 * simplifies things in that we never need to check for bad inodes
 	 * elsewhere.
 	 */
-	if (unlikely(err)) {
-		iput(vi);
+	if (unlikely(err))
 		vi = ERR_PTR(err);
-	}
 	return vi;
 }
 
@@ -243,17 +244,18 @@ struct inode *ntfs_attr_iget(struct inode *base_vi, __le32 type,
 	if (vi->i_state & I_NEW) {
 #endif
 		err = ntfs_read_locked_attr_inode(base_vi, vi);
-		unlock_new_inode(vi);
+		if (err)
+			discard_new_inode(vi);
+		else
+			unlock_new_inode(vi);
 	}
 	/*
 	 * There is no point in keeping bad attribute inodes around. This also
 	 * simplifies things in that we never need to check for bad attribute
 	 * inodes elsewhere.
 	 */
-	if (unlikely(err)) {
-		iput(vi);
+	if (unlikely(err))
 		vi = ERR_PTR(err);
-	}
 	return vi;
 }
 
@@ -302,17 +304,18 @@ struct inode *ntfs_index_iget(struct inode *base_vi, __le16 *name,
 	if (vi->i_state & I_NEW) {
 #endif
 		err = ntfs_read_locked_index_inode(base_vi, vi);
-		unlock_new_inode(vi);
+		if (err)
+			discard_new_inode(vi);
+		else
+			unlock_new_inode(vi);
 	}
 	/*
 	 * There is no point in keeping bad index inodes around.  This also
 	 * simplifies things in that we never need to check for bad index
 	 * inodes elsewhere.
 	 */
-	if (unlikely(err)) {
-		iput(vi);
+	if (unlikely(err))
 		vi = ERR_PTR(err);
-	}
 	return vi;
 }
 
