@@ -725,6 +725,8 @@ static void ntfs_mft_end_io(struct bio *bio)
 {
 	struct ntfs_mft_write_ctx *ctx =
 		container_of(bio, struct ntfs_mft_write_ctx, bio);
+	struct folio *folio = ctx->folio;
+	struct completion *done = ctx->done;
 	int err;
 
 	if (bio->bi_status)
@@ -738,12 +740,12 @@ static void ntfs_mft_end_io(struct bio *bio)
 			   err);
 	}
 
-	folio_end_writeback(ctx->folio);
-	folio_put(ctx->folio);
-	if (ctx->done)
-		complete(ctx->done);
-	else
+	if (!done)
 		bio_put(bio);
+	folio_end_writeback(folio);
+	folio_put(folio);
+	if (done)
+		complete(done);
 }
 
 static void ntfs_start_mft_writeback(struct ntfs_mft_write_ctx *ctx)
