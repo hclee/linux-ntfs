@@ -5,6 +5,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 RESULTS_DIR=${RESULTS_DIR:-"$ROOT_DIR/ntfs-4kn-results"}
 TEST_CASE=${TEST_CASE:-}
 TESTS_FILE=${TESTS_FILE:-"$ROOT_DIR/.github/xfstests/ntfs-geometry-full.list"}
+TEST_REPEATS=${TEST_REPEATS:-1}
 XFSTESTS_DIR=${XFSTESTS_DIR:-"$ROOT_DIR/exfat-testsuites/xfstests-exfat"}
 TEST_IMAGE=${TEST_IMAGE:-"$ROOT_DIR/ntfs-4kn-test.img"}
 SCRATCH_IMAGE=${SCRATCH_IMAGE:-"$ROOT_DIR/ntfs-4kn-scratch.img"}
@@ -58,12 +59,19 @@ if [[ -z "$TEST_CASE" ]]; then
 	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
 	exit 2
 fi
+if [[ ! "$TEST_REPEATS" =~ ^[1-9][0-9]*$ ]]; then
+	echo "TEST_REPEATS must be a positive integer" >&2
+	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
+	exit 2
+fi
 if ! grep -Fxq "$TEST_CASE" "$TESTS_FILE"; then
 	echo "Requested case is not in the full profile: $TEST_CASE" >&2
 	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
 	exit 2
 fi
 printf '%s\n' "$TEST_CASE" > "$RESULTS_DIR/tests.list"
+printf 'test_case=%s\ntest_repeats=%s\n' "$TEST_CASE" "$TEST_REPEATS" \
+	> "$RESULTS_DIR/repetitions.manifest"
 
 truncate -s 100G "$TEST_IMAGE" "$SCRATCH_IMAGE"
 TEST_DEV=$(sudo losetup --find --show --sector-size 4096 "$TEST_IMAGE")
@@ -196,39 +204,72 @@ EOF
 sudo mkdir -p "$TEST_MNT" "$SCRATCH_MNT"
 make -C "$XFSTESTS_DIR" -j"$(( $(nproc) + 1 ))" > "$RESULTS_DIR/xfstests-build.log" 2>&1
 
-printf 'case,status,exit_code\n' > "$RESULTS_DIR/results.csv"
+printf 'iteration,case,status,exit_code\n' > "$RESULTS_DIR/results.csv"
 while IFS= read -r test_case; do
 	[[ -z "$test_case" ]] && continue
 	safe_case=${test_case//\//_}
-	log="$RESULTS_DIR/${safe_case}.log"
-	set +e
-	(
-		cd "$XFSTESTS_DIR"
-		sudo ./check "$test_case"
-	) > "$log" 2>&1
-	rc=$?
-	set -e
-	cat "$log"
-
 	result_name=${test_case#generic/}
-	if [[ -f "$XFSTESTS_DIR/results/generic/$result_name.notrun" ]]; then
-		status=NOTRUN
-		overall_status=2
-	elif grep -Eiq '9p|timed out|timeout' "$log"; then
-		status=ENVIRONMENT
-		overall_status=3
-	elif (( rc != 0 )) || [[ -f "$XFSTESTS_DIR/results/generic/$result_name.out.bad" ]]; then
-		status=FAIL
-		if (( overall_status < 1 )); then
-			overall_status=1
+	for ((iteration = 1; iteration <= TEST_REPEATS; iteration++)); do
+		log="$RESULTS_DIR/${safe_case}.attempt-${iteration}.log"
+		printf 'Running %s (iteration %s/%s)\n' "$test_case" "$iteration" \
+			"$TEST_REPEATS"
+		rm -f "$XFSTESTS_DIR/results/generic/$result_name."{full,out.bad,dmesg,notrun}
+		set +e
+		(
+			cd "$XFSTESTS_DIR"
+			sudo ./check "$test_case"
+		) > "$log" 2>&1
+		rc=$?
+		set -e
+		cat "$log"
+
+		if [[ -f "$XFSTESTS_DIR/results/generic/$result_name.notrun" ]]; then
+			status=NOTRUN
+			overall_status=2
+		elif grep -Eiq '9p|timed out|timeout' "$log"; then
+			status=ENVIRONMENT
+			overall_status=3
+		elif (( rc != 0 )) ||
+			[[ -f "$XFSTESTS_DIR/results/generic/$result_name.out.bad" ]]; then
+			status=FAIL
+			if (( overall_status < 1 )); then
+				overall_status=1
+			fi
+		else
+			status=PASS
 		fi
-	else
-		status=PASS
-	fi
-	printf '%s,%s,%s\n' "$test_case" "$status" "$rc" >> "$RESULTS_DIR/results.csv"
+
+		attempt_dmesg="$RESULTS_DIR/dmesg-attempt-${iteration}.log"
+		sudo dmesg --color=never > "$attempt_dmesg" 2>&1 || true
+		if grep -Eiq \
+			'BUG:|Oops:|kernel panic|KASAN:|UBSAN:|general protection fault|Call Trace:' \
+			"$attempt_dmesg"; then
+			status=KERNEL_FAULT
+			rc=4
+			overall_status=4
+		fi
+
+		printf '%s,%s,%s,%s\n' "$iteration" "$test_case" "$status" "$rc" \
+			>> "$RESULTS_DIR/results.csv"
+		artifact_dir="$RESULTS_DIR/xfstests-results/generic"
+		mkdir -p "$artifact_dir"
+		for suffix in full out.bad dmesg; do
+			result="$XFSTESTS_DIR/results/generic/$result_name.$suffix"
+			if [[ -f "$result" ]]; then
+				cp "$result" \
+					"$artifact_dir/${result_name}.attempt-${iteration}.${suffix}"
+			fi
+		done
+		if [[ "$status" != PASS ]]; then
+			printf 'Stopping after iteration %s with status %s\n' \
+				"$iteration" "$status"
+			break
+		fi
+	done
 done < "$RESULTS_DIR/tests.list"
 
 sudo chmod -R a+rX "$XFSTESTS_DIR/results" 2>/dev/null || true
+sudo dmesg --color=never > "$RESULTS_DIR/dmesg-after.log" 2>&1 || true
 
 if grep -Eiq 'BUG:|Oops:|kernel panic|KASAN:|UBSAN:|general protection fault|Call Trace:' \
 	"$RESULTS_DIR/dmesg-after.log"; then
