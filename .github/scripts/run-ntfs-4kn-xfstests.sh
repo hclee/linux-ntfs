@@ -188,8 +188,8 @@ import struct
 import sys
 
 device = sys.argv[1]
-	expected_mft_record_size = int(sys.argv[2])
-	with open(device, "rb", buffering=0) as stream:
+expected_mft_record_size = int(sys.argv[2])
+with open(device, "rb", buffering=0) as stream:
     boot = stream.read(4096)
 
 bytes_per_sector = struct.unpack_from("<H", boot, 11)[0]
