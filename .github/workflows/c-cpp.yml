@@ -68,6 +68,7 @@ jobs:
         loop=$(sudo losetup --find --show full_test.img)
         trap 'sudo umount ./full_test/ 2>/dev/null || true; sudo losetup --detach "$loop" 2>/dev/null || true; rm -f full_test.img' EXIT
         sudo mkfs.ntfs "$loop"
+        mkdir -p full_test
         sudo mount -t ntfs "$loop" ./full_test/
         cd full_test/
         i=1; while [ $i -le 10000 ]; do sudo touch file$i; i=$(($i + 1)); done
