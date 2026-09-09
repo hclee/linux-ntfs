@@ -74,12 +74,11 @@ jobs:
           set -euxo pipefail
           cd ntfsprogs-plus
           ./autogen.sh
-          ./configure --prefix="$GITHUB_WORKSPACE/ntfsprogs-install"
+          ./configure
           make -j"$(nproc)"
-          make install
           cd "$GITHUB_WORKSPACE"
-          MKNTFS=$(find ntfsprogs-install -type f -name mkntfs -perm -111 | head -1)
-          test -n "$MKNTFS"
+          MKNTFS="$GITHUB_WORKSPACE/ntfsprogs-plus/src/.libs/mkntfs"
+          test -x "$MKNTFS"
           "$MKNTFS" --help | tee ci-results/mkntfs-help.txt
           grep -F -- '--mft-record-size' ci-results/mkntfs-help.txt
           printf 'mkntfs=%s\n' "$GITHUB_WORKSPACE/$MKNTFS" >> "$GITHUB_ENV"
