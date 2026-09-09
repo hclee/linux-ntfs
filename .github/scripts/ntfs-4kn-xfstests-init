@@ -6,6 +6,7 @@ RESULT_MNT=/results
 XFSTESTS=/opt/xfstests-exfat
 MKNTFS=/opt/ntfsprogs/src/.libs/mkntfs
 KERNEL_VERSION=6.18.22
+export PATH=/opt/ntfsprogs/src/.libs:/opt/ntfsprogs/libntfs/.libs:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export LD_LIBRARY_PATH=/opt/ntfsprogs/libntfs/.libs:/opt/ntfsprogs/src/.libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 
 mkdir -p /dev /proc /sys "$RESULT_MNT" /mnt/test /mnt/scratch
@@ -51,7 +52,7 @@ if ! mount -t ext4 "$result_dev" "$RESULT_MNT"; then
 	busybox poweroff -f
 	exit 1
 fi
-exec > >(tee "$RESULT_MNT/guest-console.log") 2>&1
+exec > "$RESULT_MNT/guest-console.log" 2>&1
 
 echo "NTFS_XFSTESTS_INIT"
 
