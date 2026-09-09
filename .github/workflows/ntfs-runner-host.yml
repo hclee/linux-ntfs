@@ -122,6 +122,8 @@ jobs:
           ln -sf "$MKNTFS" "$GITHUB_WORKSPACE/ci-results/mkfs.ntfs"
           ln -sf "$GITHUB_WORKSPACE/ntfsprogs-plus/src/.libs/ntfsresize" \
             "$GITHUB_WORKSPACE/ci-results/ntfsresize"
+          ln -sf "$GITHUB_WORKSPACE/.github/scripts/ntfs-runner-host-mount" \
+            "$GITHUB_WORKSPACE/ci-results/mount"
           export PATH="$GITHUB_WORKSPACE/ci-results:$PATH"
           sudo -E env \
             GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
