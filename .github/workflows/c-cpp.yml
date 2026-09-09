@@ -52,7 +52,10 @@ jobs:
         sed -i '/obj-\$(CONFIG_EXFAT_FS).*+= exfat\//i obj-$(CONFIG_NTFS_FS)       += ntfs/' fs/Makefile
         echo 'CONFIG_NTFS_FS=m' >> .config
         echo 'CONFIG_GENDWARFKSYMS=n' >> .config
-        make -j$((`nproc`+1)) KBUILD_MODPOST_WARN=1 fs/ntfs/ntfs.ko
+        # Linux 6.17 cannot finalize an in-tree single-module target when
+        # vmlinux.o is unavailable. Build the port as an external module
+        # against the prepared 6.17 tree instead.
+        make -j$((`nproc`+1)) KBUILD_MODPOST_WARN=1 M=fs/ntfs modules
         cp fs/ntfs/ntfs.ko "$GITHUB_WORKSPACE/ntfs-6.17.13.ko"
         cd "$GITHUB_WORKSPACE"
         rm -rf ../linux-6.17.13/
