@@ -11,8 +11,16 @@ on:
     - ntfs-next
   workflow_dispatch:
     inputs:
+      geometry:
+        description: "Native 4Kn profile geometry"
+        default: m1k
+        required: true
+        type: choice
+        options:
+        - m1k
+        - m4k
       test_case:
-        description: "Run one generic case five times, or all listed cases once"
+        description: "Run one case five times, or all listed cases once"
         default: generic/013
         required: true
         type: string
@@ -84,22 +92,23 @@ jobs:
         cd ..
         sudo umount ./full_test/
         sudo ntfsck -n "$loop"
-    - name: native 4kn-c4k-m1k xfstests (one setup, sequential profile)
+    - name: native 4kn xfstests (one setup, sequential profile)
       env:
+        GEOMETRY: ${{ github.event.inputs.geometry || 'm1k' }}
         TEST_CASE: ${{ github.event.inputs.test_case || 'generic/013' }}
         TEST_REPEATS: 5
       run: |
         export PATH=/usr/local/bin:/usr/local/sbin:$PATH
         export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-        RESULTS_DIR="$GITHUB_WORKSPACE/ntfs-4kn-results" \
+        RESULTS_DIR="$GITHUB_WORKSPACE/ntfs-4kn-${GEOMETRY}-results" \
           bash .github/scripts/run-ntfs-4kn-xfstests.sh
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: ntfs-4kn-c4k-m1k-${{ github.run_id }}
+        name: ntfs-4kn-c4k-${{ github.event.inputs.geometry || 'm1k' }}-${{ github.run_id }}
         if-no-files-found: warn
         path: |
-          ntfs-4kn-results/
+          ntfs-4kn-*-results/
           exfat-testsuites/xfstests-exfat/results/
           host-module-build.log
           host-module-install.log

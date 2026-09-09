@@ -2,16 +2,29 @@
 set -Eeuo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-RESULTS_DIR=${RESULTS_DIR:-"$ROOT_DIR/ntfs-4kn-results"}
+GEOMETRY=${GEOMETRY:-m1k}
+case "$GEOMETRY" in
+m1k)
+	MFT_RECORD_SIZE=1024
+	;;
+m4k)
+	MFT_RECORD_SIZE=4096
+	;;
+*)
+	echo "GEOMETRY must be m1k or m4k" >&2
+	exit 2
+	;;
+esac
+RESULTS_DIR=${RESULTS_DIR:-"$ROOT_DIR/ntfs-4kn-$GEOMETRY-results"}
 TEST_CASE=${TEST_CASE:-}
 TESTS_FILE=${TESTS_FILE:-"$ROOT_DIR/.github/xfstests/ntfs-geometry-full.list"}
 TEST_REPEATS=${TEST_REPEATS:-1}
 CHECK_TIMEOUT=${CHECK_TIMEOUT:-120}
 XFSTESTS_DIR=${XFSTESTS_DIR:-"$ROOT_DIR/exfat-testsuites/xfstests-exfat"}
-TEST_IMAGE=${TEST_IMAGE:-"$ROOT_DIR/ntfs-4kn-test.img"}
-SCRATCH_IMAGE=${SCRATCH_IMAGE:-"$ROOT_DIR/ntfs-4kn-scratch.img"}
-TEST_MNT=${TEST_MNT:-/mnt/ntfs-4kn-test}
-SCRATCH_MNT=${SCRATCH_MNT:-/mnt/ntfs-4kn-scratch}
+TEST_IMAGE=${TEST_IMAGE:-"$ROOT_DIR/ntfs-4kn-$GEOMETRY-test.img"}
+SCRATCH_IMAGE=${SCRATCH_IMAGE:-"$ROOT_DIR/ntfs-4kn-$GEOMETRY-scratch.img"}
+TEST_MNT=${TEST_MNT:-/mnt/ntfs-4kn-$GEOMETRY-test}
+SCRATCH_MNT=${SCRATCH_MNT:-/mnt/ntfs-4kn-$GEOMETRY-scratch}
 
 TEST_DEV=
 SCRATCH_DEV=
@@ -81,7 +94,8 @@ else
 	fi
 	printf '%s\n' "$TEST_CASE" > "$RESULTS_DIR/tests.list"
 fi
-printf 'test_case=%s\ntest_repeats=%s\n' "$TEST_CASE" "$TEST_REPEATS" \
+printf 'geometry=%s\nmft_record_size=%s\ntest_case=%s\ntest_repeats=%s\n' \
+	"$GEOMETRY" "$MFT_RECORD_SIZE" "$TEST_CASE" "$TEST_REPEATS" \
 	> "$RESULTS_DIR/repetitions.manifest"
 
 truncate -s 100G "$TEST_IMAGE" "$SCRATCH_IMAGE"
@@ -141,7 +155,8 @@ format_device()
 	local dev=$2
 	local log="$RESULTS_DIR/mkntfs-$label.log"
 
-	if ! sudo "$MKNTFS" -Q -s 4096 -c 4096 -r 1024 "$dev" > "$log" 2>&1; then
+	if ! sudo "$MKNTFS" -Q -s 4096 -c 4096 -r "$MFT_RECORD_SIZE" "$dev" \
+		> "$log" 2>&1; then
 		cat "$log" >&2
 		classify_failure SETUP_BLOCKED
 		exit 2
@@ -168,12 +183,13 @@ check_boot_geometry()
 	local dev=$2
 	local output="$RESULTS_DIR/boot-$label.txt"
 
-	if ! sudo python3 - "$dev" > "$output" <<'PY'
+	if ! sudo python3 - "$dev" "$MFT_RECORD_SIZE" > "$output" <<'PY'
 import struct
 import sys
 
 device = sys.argv[1]
-with open(device, "rb", buffering=0) as stream:
+	expected_mft_record_size = int(sys.argv[2])
+	with open(device, "rb", buffering=0) as stream:
     boot = stream.read(4096)
 
 bytes_per_sector = struct.unpack_from("<H", boot, 11)[0]
@@ -190,8 +206,10 @@ print(f"sectors_per_cluster={sectors_per_cluster}")
 print(f"cluster_size={cluster_size}")
 print(f"mft_record_size={mft_record_size}")
 
-if (bytes_per_sector, cluster_size, mft_record_size) != (4096, 4096, 1024):
-    raise SystemExit("unexpected NTFS 4kn-c4k-m1k boot geometry")
+if (bytes_per_sector, cluster_size, mft_record_size) != (
+    4096, 4096, expected_mft_record_size
+):
+    raise SystemExit("unexpected NTFS 4Kn boot geometry")
 PY
 	then
 		cat "$output" >&2
@@ -218,7 +236,7 @@ export TEST_DIR=$TEST_MNT
 export SCRATCH_DEV=$SCRATCH_DEV
 export SCRATCH_MNT=$SCRATCH_MNT
 export FSTYP=ntfs
-export MKFS_OPTIONS="-q -s 4096 -c 4096 -r 1024"
+export MKFS_OPTIONS="-q -s 4096 -c 4096 -r $MFT_RECORD_SIZE"
 export MOUNT_OPTIONS="-osymlink=native,native_symlink=rel"
 EOF
 
