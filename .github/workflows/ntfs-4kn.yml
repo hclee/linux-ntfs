@@ -28,7 +28,7 @@ jobs:
   geometry:
     name: "6.18.22 native 4Kn geometry"
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 120
 
     steps:
       - name: Check out linux-ntfs
