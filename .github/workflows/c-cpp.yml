@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       test_case:
-        description: "Run one generic case"
+        description: "Run one generic case five times"
         default: generic/013
         required: true
         type: string
@@ -84,13 +84,39 @@ jobs:
         cd ..
         sudo umount ./full_test/
         sudo ntfsck -n "$loop"
-    - name: native 4kn-c4k-m1k xfstests
+    - name: native 4kn-c4k-m1k xfstests (five repetitions)
       env:
         TEST_CASE: ${{ github.event.inputs.test_case || 'generic/013' }}
       run: |
         export PATH=/usr/local/bin:/usr/local/sbin:$PATH
         export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-        bash .github/scripts/run-ntfs-4kn-xfstests.sh
+        overall_status=0
+        for iteration in 1 2 3 4 5; do
+          results_dir="$GITHUB_WORKSPACE/ntfs-4kn-results/run-$iteration"
+          mkdir -p "$results_dir"
+          echo "Running $TEST_CASE (iteration $iteration/5)"
+          set +e
+          RESULTS_DIR="$results_dir" \
+            bash .github/scripts/run-ntfs-4kn-xfstests.sh
+          status=$?
+          set -e
+          printf 'iteration=%s,status=%s\n' "$iteration" "$status" \
+            | tee -a "$GITHUB_WORKSPACE/ntfs-4kn-results/repetitions.log"
+          if [ "$status" -gt "$overall_status" ]; then
+            overall_status=$status
+          fi
+          result_name=${TEST_CASE#generic/}
+          mkdir -p "$results_dir/xfstests-results/generic"
+          for result in \
+            "exfat-testsuites/xfstests-exfat/results/generic/$result_name.full" \
+            "exfat-testsuites/xfstests-exfat/results/generic/$result_name.out.bad" \
+            "exfat-testsuites/xfstests-exfat/results/generic/$result_name.dmesg"; do
+            if [ -f "$result" ]; then
+              cp "$result" "$results_dir/xfstests-results/generic/"
+            fi
+          done
+        done
+        exit "$overall_status"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
