@@ -20,7 +20,8 @@ permissions:
 env:
   KERNEL_VERSION: 6.18.22
   NTFS_PROGS_REPOSITORY: hclee/ntfsprogs-plus
-  NTFS_PROGS_REF: 1c7d03669425
+  NTFS_PROGS_REF: topic/mkfs-record-size-clean
+  NTFS_PROGS_SHA: 1c7d03669425f668e90f9c58a56e66ba34f9e131
 
 jobs:
   geometry:
@@ -62,10 +63,10 @@ jobs:
       - name: Check out pinned ntfsprogs-plus
         run: |
           set -eux
-          git clone --filter=blob:none \
+          git clone --filter=blob:none --single-branch \
+            --branch "$NTFS_PROGS_REF" \
             "https://github.com/${NTFS_PROGS_REPOSITORY}.git" ntfsprogs-plus
-          git -C ntfsprogs-plus fetch --depth=1 origin "$NTFS_PROGS_REF"
-          git -C ntfsprogs-plus checkout --detach "$NTFS_PROGS_REF"
+          git -C ntfsprogs-plus checkout --detach "$NTFS_PROGS_SHA"
           git -C ntfsprogs-plus rev-parse HEAD | tee ci-results/ntfsprogs-plus.sha
 
       - name: Build and verify mkntfs
