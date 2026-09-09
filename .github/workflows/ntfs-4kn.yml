@@ -79,6 +79,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           MKNTFS="$GITHUB_WORKSPACE/ntfsprogs-plus/src/.libs/mkntfs"
           test -x "$MKNTFS"
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/ntfsprogs-plus/libntfs/.libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           "$MKNTFS" --help | tee ci-results/mkntfs-help.txt
           grep -F -- '--mft-record-size' ci-results/mkntfs-help.txt
           printf 'mkntfs=%s\n' "$GITHUB_WORKSPACE/$MKNTFS" >> "$GITHUB_ENV"
