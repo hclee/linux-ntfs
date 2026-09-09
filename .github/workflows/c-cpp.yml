@@ -52,7 +52,7 @@ jobs:
         sed -i '/obj-\$(CONFIG_EXFAT_FS).*+= exfat\//i obj-$(CONFIG_NTFS_FS)       += ntfs/' fs/Makefile
         echo 'CONFIG_NTFS_FS=m' >> .config
         echo 'CONFIG_GENDWARFKSYMS=n' >> .config
-        make -j$((`nproc`+1)) KBUILD_MODPOST_WARN=1 KBUILD_MODPOST_NOFINAL=1 fs/ntfs/ntfs.ko
+        make -j$((`nproc`+1)) KBUILD_MODPOST_WARN=1 fs/ntfs/ntfs.ko
         cp fs/ntfs/ntfs.ko "$GITHUB_WORKSPACE/ntfs-6.18.22.ko"
         cd "$GITHUB_WORKSPACE"
         rm -rf ../linux-6.18.22/
