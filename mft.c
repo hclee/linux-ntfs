@@ -3508,7 +3508,7 @@ static int ntfs_map_mft_io_for_folio(struct ntfs_inode *ni, u64 folio_byte,
 }
 
 static int ntfs_prepare_mft_folio_units(struct ntfs_inode *ni, u64 folio_byte,
-					u64 file_limit,
+					u64 file_limit, bool native_4k,
 					const unsigned long *record_writable,
 					struct ntfs_mft_io_unit *units,
 					unsigned int *nr_units,
@@ -3521,14 +3521,21 @@ static int ntfs_prepare_mft_folio_units(struct ntfs_inode *ni, u64 folio_byte,
 	while (unit_byte < folio_end && unit_byte < file_limit) {
 		struct ntfs_mft_io_unit unit;
 		u64 record_byte;
-		u64 cluster_end = ntfs_cluster_to_bytes(
-			vol, ntfs_bytes_to_cluster(vol, unit_byte) + 1);
-		u64 record_end =
-			round_down(unit_byte, (u64)vol->mft_record_size) +
-			vol->mft_record_size;
-		u64 unit_end = min3(record_end, cluster_end, folio_end);
+		u64 unit_end;
 		bool writable = true;
 		int err;
+
+		if (native_4k)
+			unit_end = unit_byte + NTFS_4KN_BLOCK_SIZE;
+		else {
+			u64 cluster_end = ntfs_cluster_to_bytes(
+				vol, ntfs_bytes_to_cluster(vol, unit_byte) + 1);
+			u64 record_end = round_down(unit_byte,
+						    (u64)vol->mft_record_size) +
+					 vol->mft_record_size;
+
+			unit_end = min3(record_end, cluster_end, folio_end);
+		}
 
 		record_byte = round_down(unit_byte, (u64)vol->mft_record_size);
 		while (record_byte < min(unit_end, file_limit)) {
