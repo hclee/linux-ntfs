@@ -39,7 +39,7 @@ done
 
 if [ "${#native_devs[@]}" -ne 2 ] || [ -z "$result_dev" ]; then
 	echo "NTFS_XFSTESTS_FAIL: expected two 4096/4096 devices and NTFS_RESULTS"
-	poweroff -f
+	busybox poweroff -f
 	exit 1
 fi
 
@@ -47,7 +47,7 @@ TEST_DEV=${native_devs[0]}
 SCRATCH_DEV=${native_devs[1]}
 if ! mount -t ext4 "$result_dev" "$RESULT_MNT"; then
 	echo "NTFS_XFSTESTS_FAIL: result device could not be mounted"
-	poweroff -f
+	busybox poweroff -f
 	exit 1
 fi
 exec > >(tee "$RESULT_MNT/guest-console.log") 2>&1
@@ -58,7 +58,7 @@ if ! insmod "/lib/modules/$KERNEL_VERSION/extra/ntfs.ko"; then
 	echo "NTFS_XFSTESTS_FAIL: ntfs module could not be loaded"
 	echo NTFS_XFSTESTS_FAIL > "$RESULT_MNT/status"
 	sync
-	poweroff -f
+	busybox poweroff -f
 	exit 1
 fi
 
@@ -68,7 +68,7 @@ for dev in "$TEST_DEV" "$SCRATCH_DEV"; do
 		echo "NTFS_XFSTESTS_FAIL: mkntfs failed for $dev"
 		echo NTFS_XFSTESTS_FAIL > "$RESULT_MNT/status"
 		sync
-		poweroff -f
+		busybox poweroff -f
 		exit 1
 	}
 done
@@ -132,5 +132,5 @@ fi
 } | tee "$RESULT_MNT/status"
 
 sync
-poweroff -f
+busybox poweroff -f
 sleep 30
