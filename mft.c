@@ -867,15 +867,6 @@ static int ntfs_sync_mft_mirror_record(struct ntfs_volume *vol,
 	return ntfs_sync_mft_mirror_unit(vol, source, mirror_file_ofs, &unit);
 }
 
-/*
- * 4Kn geometry is validated while mounting.  Once mounted, the device
- * logical block size identifies a native 4Kn volume.
- */
-static bool ntfs_is_4k_native(const struct ntfs_volume *vol)
-{
-	return bdev_logical_block_size(vol->sb->s_bdev) == NTFS_4KN_BLOCK_SIZE;
-}
-
 static int ntfs_prepare_mft_record_io_units(struct ntfs_inode *ni,
 					    struct ntfs_mft_io_unit units[2])
 {
@@ -940,7 +931,7 @@ static int ntfs_prepare_mft_record_io_units(struct ntfs_inode *ni,
  * On error (specifically ENOMEM), we redirty the record so it can be retried.
  * For other errors, we mark the volume with errors.
  *
- * On native 4Kn volumes with sub-4Kn MFT records, the containing 4Kn block is
+ * When the MFT I/O unit is larger than the MFT record, the containing unit is
  * always written synchronously, regardless of @sync.
  */
 int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int sync)
@@ -3558,7 +3549,7 @@ static int ntfs_map_mft_io_for_folio(struct ntfs_inode *ni, u64 folio_byte,
 }
 
 static int ntfs_prepare_mft_folio_units(struct ntfs_inode *ni, u64 folio_byte,
-					u64 file_limit, bool native_4k,
+					u64 file_limit,
 					const unsigned long *record_writable,
 					struct ntfs_mft_io_unit *units,
 					unsigned int *nr_units,
@@ -3572,20 +3563,17 @@ static int ntfs_prepare_mft_folio_units(struct ntfs_inode *ni, u64 folio_byte,
 		struct ntfs_mft_io_unit unit;
 		u64 record_byte;
 		u64 unit_end;
+		u64 io_unit_end;
+		u64 cluster_end;
 		bool writable = true;
 		int err;
 
-		if (native_4k)
-			unit_end = unit_byte + NTFS_4KN_BLOCK_SIZE;
-		else {
-			u64 cluster_end = ntfs_cluster_to_bytes(
-				vol, ntfs_bytes_to_cluster(vol, unit_byte) + 1);
-			u64 record_end = round_down(unit_byte,
-						    (u64)vol->mft_record_size) +
-					 vol->mft_record_size;
-
-			unit_end = min3(record_end, cluster_end, folio_end);
-		}
+		io_unit_end =
+			round_down(unit_byte, (u64)vol->mft_io_unit_size) +
+			vol->mft_io_unit_size;
+		cluster_end = ntfs_cluster_to_bytes(
+			vol, ntfs_bytes_to_cluster(vol, unit_byte) + 1);
+		unit_end = min3(io_unit_end, cluster_end, folio_end);
 
 		record_byte = round_down(unit_byte, (u64)vol->mft_record_size);
 		while (record_byte < min(unit_end, file_limit)) {
@@ -3677,7 +3665,6 @@ static int ntfs_write_mft_block(NTFS_MFT_WB_ARGS)
 	unsigned long flags;
 	loff_t i_size;
 	s64 allocated_size;
-	bool native_4k = ntfs_is_4k_native(vol);
 	bool defer = false, redirty = false;
 	int err = 0;
 
@@ -3745,8 +3732,8 @@ static int ntfs_write_mft_block(NTFS_MFT_WB_ARGS)
 	}
 
 	err = ntfs_prepare_mft_folio_units(ni, folio_byte, file_limit,
-					   native_4k, record_writable, units,
-					   &nr_units, max_units, &defer);
+					   record_writable, units, &nr_units,
+					   max_units, &defer);
 	if (err)
 		goto out_noio;
 	if (!nr_units)
