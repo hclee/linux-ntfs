@@ -6,6 +6,7 @@ RESULT_MNT=/results
 XFSTESTS=/opt/xfstests-exfat
 MKNTFS=/opt/ntfsprogs/src/.libs/mkntfs
 KERNEL_VERSION=6.18.22
+export LD_LIBRARY_PATH=/opt/ntfsprogs/libntfs/.libs:/opt/ntfsprogs/src/.libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 
 mkdir -p /dev /proc /sys "$RESULT_MNT" /mnt/test /mnt/scratch
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
