@@ -6,6 +6,7 @@ on:
       - ci/4kn-c4k-m1k
       - test-4kn-*
       - port/4kn-c4k-m1k-1to1
+      - port/4kn-c4k-m1k-1to1-ci
   workflow_dispatch:
     inputs:
       test_case:
