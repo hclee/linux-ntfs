@@ -3474,16 +3474,22 @@ static int ntfs_map_mft_io_locked(struct ntfs_inode *ni, u64 folio_byte,
 {
 	struct ntfs_volume *vol = ni->vol;
 	u64 file_ofs = folio_byte + unit->folio_ofs;
-	s64 vcn, lcn, checked_lcn;
+	s64 vcn, lcn;
 
 	lockdep_assert_held(&ni->runlist.lock);
 	if (!ni->runlist.rl)
 		return -EIO;
 
 	vcn = ntfs_bytes_to_cluster(vol, file_ofs);
-	checked_lcn = ntfs_rl_vcn_to_lcn(ni->runlist.rl, vcn);
-	lcn = ntfs_attr_vcn_to_lcn_nolock(ni, vcn, false);
-	if (lcn < 0 || lcn != checked_lcn)
+	/*
+	 * $MFT is fully mapped at mount time and extensions merge already
+	 * mapped runs under the write lock. Do not remap here: the generic
+	 * helper may drop this read lock while upgrading it.
+	 */
+	lcn = ntfs_rl_vcn_to_lcn(ni->runlist.rl, vcn);
+	if (lcn == LCN_RL_NOT_MAPPED)
+		return -EAGAIN;
+	if (lcn < 0)
 		return -EIO;
 	if (ntfs_bytes_to_cluster_off(vol, file_ofs) + unit->len >
 	    vol->cluster_size)
