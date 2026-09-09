@@ -20,7 +20,7 @@ permissions:
 env:
   KERNEL_VERSION: 6.18.22
   NTFS_PROGS_REPOSITORY: hclee/ntfsprogs-plus
-  NTFS_PROGS_REF: topic/mkfs-record-size-clean
+  NTFS_PROGS_REF: topic/mkfs-mft-record-size-clean
   NTFS_PROGS_SHA: 1c7d03669425f668e90f9c58a56e66ba34f9e131
 
 jobs:
