@@ -748,8 +748,19 @@ static void ntfs_mft_end_io(struct bio *bio)
 
 static void ntfs_start_mft_writeback(struct ntfs_mft_write_ctx *ctx)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 3, 0)
+	struct writeback_control wbc = {};
+#endif
+
 	if (ctx->writeback_started)
 		return;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
+	inode_attach_wb(ctx->mapping->host, ctx->folio);
+#else
+	wbc_attach_fdatawrite_inode(&wbc, ctx->mapping->host);
+	wbc_detach_inode(&wbc);
+#endif
 
 	folio_get(ctx->folio);
 	folio_start_writeback(ctx->folio);
