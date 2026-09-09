@@ -13,13 +13,11 @@ mkdir -p /dev /proc /sys "$RESULT_MNT" /mnt/test /mnt/scratch
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 mount -t proc proc /proc 2>/dev/null || true
 mount -t sysfs sysfs /sys 2>/dev/null || true
-exec > /dev/console 2>&1
 
 result_dev=
 native_devs=()
 for _ in $(seq 1 60); do
 	native_devs=()
-	non_native_devs=()
 	result_dev=
 	for sysdev in /sys/class/block/vd*; do
 		[ -e "$sysdev" ] || continue
@@ -30,16 +28,11 @@ for _ in $(seq 1 60); do
 		echo "device=$dev logical=$logical physical=$physical"
 		if [ "$logical" = 4096 ] && [ "$physical" = 4096 ]; then
 			native_devs+=("$dev")
-		else
-			non_native_devs+=("$dev")
 		fi
 		if [ "$(blkid -s LABEL -o value "$dev" 2>/dev/null || true)" = NTFS_RESULTS ]; then
 			result_dev=$dev
 		fi
 	done
-	if [ -z "$result_dev" ] && [ "${#non_native_devs[@]}" -eq 1 ]; then
-		result_dev=${non_native_devs[0]}
-	fi
 	if [ "${#native_devs[@]}" -eq 2 ] && [ -n "$result_dev" ]; then
 		break
 	fi

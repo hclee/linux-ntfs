@@ -338,4 +338,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ntfs-4kn-6.18.22-setup
-          path: ci-results
+          path: |
+            ci-results/*.log
+            ci-results/*.txt
+            ci-results/bzImage
+            ci-results/kernel.config
+            ci-results/ntfs.ko
+            ci-results/xfstests/**
