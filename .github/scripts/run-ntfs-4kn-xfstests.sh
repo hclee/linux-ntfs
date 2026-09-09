@@ -6,6 +6,7 @@ RESULTS_DIR=${RESULTS_DIR:-"$ROOT_DIR/ntfs-4kn-results"}
 TEST_CASE=${TEST_CASE:-}
 TESTS_FILE=${TESTS_FILE:-"$ROOT_DIR/.github/xfstests/ntfs-geometry-full.list"}
 TEST_REPEATS=${TEST_REPEATS:-1}
+CHECK_TIMEOUT=${CHECK_TIMEOUT:-120}
 XFSTESTS_DIR=${XFSTESTS_DIR:-"$ROOT_DIR/exfat-testsuites/xfstests-exfat"}
 TEST_IMAGE=${TEST_IMAGE:-"$ROOT_DIR/ntfs-4kn-test.img"}
 SCRATCH_IMAGE=${SCRATCH_IMAGE:-"$ROOT_DIR/ntfs-4kn-scratch.img"}
@@ -61,6 +62,11 @@ if [[ -z "$TEST_CASE" ]]; then
 fi
 if [[ ! "$TEST_REPEATS" =~ ^[1-9][0-9]*$ ]]; then
 	echo "TEST_REPEATS must be a positive integer" >&2
+	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
+	exit 2
+fi
+if [[ ! "$CHECK_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+	echo "CHECK_TIMEOUT must be a positive integer" >&2
 	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
 	exit 2
 fi
@@ -232,7 +238,8 @@ while IFS= read -r test_case; do
 		set +e
 		(
 			cd "$XFSTESTS_DIR"
-			sudo ./check "$test_case"
+			sudo timeout --signal=TERM --kill-after=10s \
+				"${CHECK_TIMEOUT}s" ./check "$test_case"
 		) > "$log" 2>&1
 		rc=$?
 		set -e
@@ -241,6 +248,9 @@ while IFS= read -r test_case; do
 		if [[ -f "$XFSTESTS_DIR/results/generic/$result_name.notrun" ]]; then
 			status=NOTRUN
 			overall_status=2
+		elif (( rc == 124 )); then
+			status=TIMEOUT
+			overall_status=3
 		elif grep -Eiq '9p|timed out|timeout' "$log"; then
 			status=ENVIRONMENT
 			overall_status=3
