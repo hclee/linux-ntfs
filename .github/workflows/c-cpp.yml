@@ -43,7 +43,11 @@ jobs:
         mv linux-6.18.22 ../
         cp -ar * ../linux-6.18.22/fs/ntfs/
         cd ../linux-6.18.22/
+        # oldconfig exits before yes can finish; keep the expected SIGPIPE
+        # from making the pipefail-enabled logging step fail.
+        set +o pipefail
         yes "" | make oldconfig > /dev/null
+        set -o pipefail
         sed -i '/source "fs\/fat\/Kconfig"/a source "fs\/ntfs\/Kconfig"' fs/Kconfig
         sed -i '/obj-\$(CONFIG_EXFAT_FS).*+= exfat\//i obj-$(CONFIG_NTFS_FS)       += ntfs/' fs/Makefile
         echo 'CONFIG_NTFS_FS=m' >> .config
