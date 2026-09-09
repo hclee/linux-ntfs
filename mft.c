@@ -2501,6 +2501,12 @@ static int ntfs_mft_record_format(const struct ntfs_volume *vol, const s64 mft_n
 		return PTR_ERR(folio);
 	}
 	folio_lock(folio);
+	/*
+	 * ntfs_write_mft_block() may still submit a BIO sourced from this
+	 * folio after starting writeback and unlocking it.
+	 */
+	if (folio_test_writeback(folio))
+		folio_wait_writeback(folio);
 	folio_clear_uptodate(folio);
 	m = (struct mft_record *)((u8 *)kmap_local_folio(folio, 0) + ofs);
 #else
@@ -3051,6 +3057,12 @@ mft_rec_already_initialized:
 		goto undo_mftbmp_alloc;
 	}
 	folio_lock(folio);
+	/*
+	 * Do not modify the folio while an MFT writeback BIO still references
+	 * it as its source buffer.
+	 */
+	if (folio_test_writeback(folio))
+		folio_wait_writeback(folio);
 	folio_clear_uptodate(folio);
 	m = (struct mft_record *)((u8 *)kmap_local_folio(folio, 0) + ofs);
 #else
