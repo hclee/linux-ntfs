@@ -1,0 +1,293 @@
+diff --git a/src/mkntfs.c b/src/mkntfs.c
+index a8064776ee62..01b33be075b7 100644
+--- a/src/mkntfs.c
++++ b/src/mkntfs.c
+@@ -225,6 +225,8 @@ static struct mkntfs_options {
+ 	long mft_zone_multiplier;	/* -z, value from 1 to 4. Default is 1. */
+ 	long long num_sectors;		/* size of device in sectors */
+ 	long cluster_size;		/* -c, format with this cluster-size */
++	long mft_record_size;		/* -r, format with this MFT record size */
++	BOOL mft_record_size_set;	/* -r was specified */
+ 	BOOL with_uuid;			/* -U, request setting an uuid */
+ 	char *label;			/* -L, volume label */
+ } opts;
+@@ -257,6 +259,7 @@ static void mkntfs_usage(void)
+ 		"Advanced options:\n"
+ 		"    -c, --cluster-size BYTES        Specify the cluster size for the volume\n"
+ 		"    -s, --sector-size BYTES         Specify the sector size for the device\n"
++		"    -r, --mft-record-size BYTES     Specify the MFT record size\n"
+ 		"    -p, --partition-start SECTOR    Specify the partition start sector\n"
+ 		"    -H, --heads NUM                 Specify the number of heads\n"
+ 		"    -S, --sectors-per-track NUM     Specify the number of sectors per track\n"
+@@ -581,6 +584,7 @@ static void mkntfs_init_options(struct mkntfs_options *opts2)
+ 	/* Mark all the numeric options as "unset". */
+ 	opts2->cluster_size		= -1;
+ 	opts2->heads			= -1;
++	opts2->mft_record_size		= -1;
+ 	opts2->mft_zone_multiplier	= -1;
+ 	opts2->num_sectors		= -1;
+ 	opts2->part_start_sect		= -1;
+@@ -596,7 +600,7 @@ static void mkntfs_init_options(struct mkntfs_options *opts2)
+  */
+ static int mkntfs_parse_options(int argc, char *argv[], struct mkntfs_options *opts2)
+ {
+-	static const char *sopt = "-c:CfFhH:IlL:np:qQs:S:TUvVz:";
++	static const char *sopt = "-c:CfFhH:IlL:np:qQr:s:S:TUvVz:";
+ 	static const struct option lopt[] = {
+ 		{ "cluster-size",	required_argument,	NULL, 'c' },
+ 		{ "debug",		no_argument,		NULL, 'Z' },
+@@ -607,6 +611,7 @@ static int mkntfs_parse_options(int argc, char *argv[], struct mkntfs_options *o
+ 		{ "help",		no_argument,		NULL, 'h' },
+ 		{ "label",		required_argument,	NULL, 'L' },
+ 		{ "license",		no_argument,		NULL, 'l' },
++		{ "mft-record-size",	required_argument,	NULL, 'r' },
+ 		{ "mft-zone-multiplier",required_argument,	NULL, 'z' },
+ 		{ "no-action",		no_argument,		NULL, 'n' },
+ 		{ "no-indexing",	no_argument,		NULL, 'I' },
+@@ -697,6 +702,17 @@ static int mkntfs_parse_options(int argc, char *argv[], struct mkntfs_options *o
+ 					NTFS_LOG_LEVEL_VERBOSE |
+ 					NTFS_LOG_LEVEL_PROGRESS);
+ 			break;
++		case 'r':
++			if (opts2->mft_record_size_set) {
++				ntfs_log_error("You may only specify the MFT record size once.\n");
++				err++;
++			} else if (!mkntfs_parse_long(optarg, "MFT record size",
++						&opts2->mft_record_size)) {
++				err++;
++			} else {
++				opts2->mft_record_size_set = TRUE;
++			}
++			break;
+ 		case 's':
+ 			if (!mkntfs_parse_long(optarg, "sector size",
+ 						&opts2->sector_size))
+@@ -740,7 +756,8 @@ static int mkntfs_parse_options(int argc, char *argv[], struct mkntfs_options *o
+ 				break;
+ 			if (((optopt == 'c') || (optopt == 'H') ||
+ 				(optopt == 'L') || (optopt == 'p') ||
+-				(optopt == 's') || (optopt == 'S') ||
++				(optopt == 'r') || (optopt == 's') ||
++				(optopt == 'S') ||
+ 				(optopt == 'N') || (optopt == 'z')) &&
+ 					(!optarg)) {
+ 				ntfs_log_error("Option '%s' requires an "
+@@ -3644,6 +3661,53 @@ static long mkntfs_get_page_size(void)
+ 	return page_size;
+ }
+ 
++/**
++ * mkntfs_validate_mft_record_size -
++ */
++static BOOL mkntfs_validate_mft_record_size(const ntfs_volume *vol,
++		long page_size)
++{
++	unsigned long mft_size;
++
++	if (!opts.mft_record_size_set)
++		return TRUE;
++	if (opts.mft_record_size <= 0) {
++		ntfs_log_error("The MFT record size must be positive.\n");
++		return FALSE;
++	}
++	mft_size = (unsigned long)opts.mft_record_size;
++	if (mft_size < NTFS_BLOCK_SIZE ||
++			(mft_size & (mft_size - 1))) {
++		ntfs_log_error("MFT record size must be power of two, at least %u.\n",
++			NTFS_BLOCK_SIZE);
++		return FALSE;
++	}
++	if (mft_size > (unsigned long)page_size) {
++		ntfs_log_error("MFT record size exceeds page size (%li bytes).\n",
++			page_size);
++		return FALSE;
++	}
++	if (mft_size < (unsigned long)opts.sector_size) {
++		if (opts.sector_size % (long)mft_size) {
++			ntfs_log_error("MFT record size must divide sector size.\n");
++			return FALSE;
++		}
++	} else if (mft_size % (unsigned long)opts.sector_size) {
++		ntfs_log_error("MFT record size must be a sector multiple.\n");
++		return FALSE;
++	}
++	if (mft_size < vol->cluster_size) {
++		if (vol->cluster_size % mft_size) {
++			ntfs_log_error("MFT record size must divide cluster size.\n");
++			return FALSE;
++		}
++	} else if (mft_size % vol->cluster_size) {
++		ntfs_log_error("MFT record size must be a cluster multiple.\n");
++		return FALSE;
++	}
++	return TRUE;
++}
++
+ /**
+  * mkntfs_override_vol_params -
+  */
+@@ -3896,12 +3960,16 @@ static BOOL mkntfs_override_vol_params(ntfs_volume *vol)
+ 	 * Set the mft record size.  By default this is 1024 but it has to be
+ 	 * at least as big as a sector and not bigger than a page on the system
+ 	 * or the NTFS kernel driver will not be able to mount the volume.
+-	 * TODO: The mft record size should be user specifiable just like the
+-	 * "inode size" can be specified on other Linux/Unix file systems.
+ 	 */
+-	vol->mft_record_size = 1024;
+-	if (vol->mft_record_size < (u32)opts.sector_size)
+-		vol->mft_record_size = opts.sector_size;
++	if (opts.mft_record_size_set) {
++		if (!mkntfs_validate_mft_record_size(vol, page_size))
++			return FALSE;
++		vol->mft_record_size = (u32)opts.mft_record_size;
++	} else {
++		vol->mft_record_size = 1024;
++		if (vol->mft_record_size < (u32)opts.sector_size)
++			vol->mft_record_size = opts.sector_size;
++	}
+ 	if (vol->mft_record_size > (unsigned long)page_size)
+ 		ntfs_log_warning("Mft record size (%u bytes) exceeds system "
+ 				"page size (%li bytes).  You will not be able "
+@@ -3909,6 +3977,9 @@ static BOOL mkntfs_override_vol_params(ntfs_volume *vol)
+ 				"driver.\n", (unsigned)vol->mft_record_size,
+ 				page_size);
+ 	vol->mft_record_size_bits = ffs(vol->mft_record_size) - 1;
++	ntfs_log_verbose("MFT record size = %u bytes%s\n",
++			(unsigned int)vol->mft_record_size,
++			opts.mft_record_size_set ? " (specified)" : "");
+ 	ntfs_log_debug("mft record size = %u bytes\n",
+ 			(unsigned)vol->mft_record_size);
+ 	/*
+@@ -5077,6 +5148,77 @@ static BOOL mkntfs_create_root_structures(void)
+ 	return TRUE;
+ }
+ 
++/**
++ * mkntfs_write_mft_records -
++ */
++static BOOL mkntfs_write_mft_records(s64 pos, int count, u8 *buf)
++{
++	int i;
++	int full_count;
++	int tail_count;
++	int j;
++	int records_per_write;
++	s64 lw;
++	u8 *tail_buf;
++
++	if (count < 0 || !buf) {
++		ntfs_log_error("Invalid MFT write parameters.\n");
++		return FALSE;
++	}
++	if (g_vol->mft_record_size < (u32)opts.sector_size)
++		records_per_write = opts.sector_size / g_vol->mft_record_size;
++	else
++		records_per_write = 1;
++	if (!records_per_write || pos % opts.sector_size) {
++		ntfs_log_error("MFT records are not sector aligned.\n");
++		return FALSE;
++	}
++	full_count = count - count % records_per_write;
++	for (i = 0; i < full_count; i += records_per_write) {
++		if (!opts.no_action) {
++			lw = ntfs_mst_pwrite(g_vol->dev, pos, records_per_write,
++					g_vol->mft_record_size,
++					buf + i * g_vol->mft_record_size);
++			if (lw != records_per_write) {
++				ntfs_log_error("ntfs_mst_pwrite: %s\n",
++						lw == -1 ? strerror(errno) :
++						"unknown error");
++				return FALSE;
++			}
++		}
++		pos += (s64)records_per_write * g_vol->mft_record_size;
++	}
++	if (full_count == count || opts.no_action)
++		return TRUE;
++
++	/* Complete the final physical sector without extending the MFT size. */
++	tail_count = count - full_count;
++	tail_buf = ntfs_calloc(records_per_write * g_vol->mft_record_size);
++	if (!tail_buf) {
++		ntfs_log_perror("Could not allocate the MFT sector buffer");
++		return FALSE;
++	}
++	memcpy(tail_buf, buf + full_count * g_vol->mft_record_size,
++			tail_count * g_vol->mft_record_size);
++	for (j = tail_count; j < records_per_write; j++)
++		if (ntfs_mft_record_layout(g_vol, 0,
++					(MFT_RECORD *)(tail_buf +
++					j * g_vol->mft_record_size))) {
++			ntfs_log_error("Failed to layout MFT padding record.\n");
++			free(tail_buf);
++			return FALSE;
++		}
++	lw = ntfs_mst_pwrite(g_vol->dev, pos, records_per_write,
++			g_vol->mft_record_size, tail_buf);
++	free(tail_buf);
++	if (lw != records_per_write) {
++		ntfs_log_error("ntfs_mst_pwrite: %s\n", lw == -1 ?
++				strerror(errno) : "unknown error");
++		return FALSE;
++	}
++	return TRUE;
++}
++
+ /**
+  * mkntfs_redirect
+  */
+@@ -5089,6 +5231,8 @@ static int mkntfs_redirect(struct mkntfs_options *opts2)
+ 	ATTR_RECORD *a;
+ 	MFT_RECORD *m;
+ 	int i, err;
++	int mft_records;
++	int mftmirr_records;
+ 
+ 	if (!opts2) {
+ 		ntfs_log_error("Internal error: invalid parameters to mkntfs_options.\n");
+@@ -5235,21 +5379,14 @@ static int mkntfs_redirect(struct mkntfs_options *opts2)
+ 	 */
+ 	ntfs_log_verbose("Syncing $MFT.\n");
+ 	pos = g_mft_lcn * g_vol->cluster_size;
+-	lw = 1;
+-	for (i = 0; i < g_mft_size / (s32)g_vol->mft_record_size; i++) {
+-		if (!opts.no_action)
+-			lw = ntfs_mst_pwrite(g_vol->dev, pos, 1, g_vol->mft_record_size, g_buf + i * g_vol->mft_record_size);
+-		if (lw != 1) {
+-			ntfs_log_error("ntfs_mst_pwrite: %s\n", lw == -1 ?
+-					strerror(errno) : "unknown error");
+-			goto done;
+-		}
+-		pos += g_vol->mft_record_size;
+-	}
++	mft_records = g_mft_size / (s32)g_vol->mft_record_size;
++	if (!mkntfs_write_mft_records(pos, mft_records, g_buf))
++		goto done;
+ 	ntfs_log_verbose("Updating $MFTMirr.\n");
+ 	pos = g_mftmirr_lcn * g_vol->cluster_size;
+-	lw = 1;
+-	for (i = 0; i < g_rl_mftmirr[0].length * g_vol->cluster_size / g_vol->mft_record_size; i++) {
++	mftmirr_records = g_rl_mftmirr[0].length * g_vol->cluster_size /
++			g_vol->mft_record_size;
++	for (i = 0; i < mftmirr_records; i++) {
+ 		m = (MFT_RECORD*)(g_buf + i * g_vol->mft_record_size);
+ 		/*
+ 		 * Decrement the usn by one, so it becomes the same as the one
+@@ -5261,15 +5398,9 @@ static int mkntfs_redirect(struct mkntfs_options *opts2)
+ 			ntfs_log_error("ntfs_mft_usn_dec");
+ 			goto done;
+ 		}
+-		if (!opts.no_action)
+-			lw = ntfs_mst_pwrite(g_vol->dev, pos, 1, g_vol->mft_record_size, g_buf + i * g_vol->mft_record_size);
+-		if (lw != 1) {
+-			ntfs_log_error("ntfs_mst_pwrite: %s\n", lw == -1 ?
+-					strerror(errno) : "unknown error");
+-			goto done;
+-		}
+-		pos += g_vol->mft_record_size;
+ 	}
++	if (!mkntfs_write_mft_records(pos, mftmirr_records, g_buf))
++		goto done;
+ 	ntfs_log_verbose("Syncing device.\n");
+ 	if (g_vol->dev->d_ops->sync(g_vol->dev)) {
+ 		ntfs_log_error("Syncing device. FAILED");
