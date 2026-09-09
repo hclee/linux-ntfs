@@ -10,6 +10,7 @@
 
 #include <linux/writeback.h>
 #include <linux/bio.h>
+#include <linux/blkdev.h>
 #include <linux/completion.h>
 #include <linux/iomap.h>
 
@@ -770,18 +771,37 @@ err_out:
 }
 
 static int ntfs_sync_mft_mirror_record(struct ntfs_volume *vol,
-				       struct folio *source, const u64 mft_no)
+				       struct folio *source, const u64 mft_no,
+				       bool full_block_io)
 {
+	u64 mirror_file_ofs = (u64)mft_no * vol->mft_record_size;
 	struct ntfs_mft_io_unit unit = {
 		.folio_ofs = NTFS_MFT_NR_TO_POFS(vol, mft_no),
 		.len = vol->mft_record_size,
 	};
 
-	return ntfs_sync_mft_mirror_unit(
-		vol, source, (u64)mft_no * vol->mft_record_size, &unit);
+	if (full_block_io) {
+		mirror_file_ofs =
+			round_down(mirror_file_ofs, (u64)NTFS_4KN_BLOCK_SIZE);
+		unit.folio_ofs =
+			round_down(unit.folio_ofs, NTFS_4KN_BLOCK_SIZE);
+		unit.len = NTFS_4KN_BLOCK_SIZE;
+	}
+
+	return ntfs_sync_mft_mirror_unit(vol, source, mirror_file_ofs, &unit);
+}
+
+/*
+ * 4Kn geometry is validated while mounting.  Once mounted, the device
+ * logical block size identifies a native 4Kn volume.
+ */
+static bool ntfs_is_4k_native(const struct ntfs_volume *vol)
+{
+	return bdev_logical_block_size(vol->sb->s_bdev) == NTFS_4KN_BLOCK_SIZE;
 }
 
 static int ntfs_prepare_mft_record_io_units(struct ntfs_inode *ni,
+					    bool full_block_io,
 					    struct ntfs_mft_io_unit units[2])
 {
 	struct ntfs_volume *vol = ni->vol;
@@ -798,6 +818,18 @@ static int ntfs_prepare_mft_record_io_units(struct ntfs_inode *ni,
 			return -EIO;
 
 	cluster_ofs = ntfs_bytes_to_cluster_off(vol, record_byte);
+	if (full_block_io) {
+		cluster_ofs = round_down(cluster_ofs, NTFS_4KN_BLOCK_SIZE);
+		disk_byte = NTFS_CLU_TO_B(vol, ni->mft_lcn[0]) + cluster_ofs;
+		units[0] = (struct ntfs_mft_io_unit){
+			.sector = ntfs_bytes_to_bio_sector(disk_byte),
+			.folio_ofs =
+				round_down(ni->folio_ofs, NTFS_4KN_BLOCK_SIZE),
+			.len = NTFS_4KN_BLOCK_SIZE,
+		};
+		return 1;
+	}
+
 	disk_byte = NTFS_CLU_TO_B(vol, ni->mft_lcn[0]) + cluster_ofs;
 	units[0] = (struct ntfs_mft_io_unit){
 		.sector = ntfs_bytes_to_bio_sector(disk_byte),
@@ -832,6 +864,9 @@ static int ntfs_prepare_mft_record_io_units(struct ntfs_inode *ni,
  * On success, clean the mft record and return 0.
  * On error (specifically ENOMEM), we redirty the record so it can be retried.
  * For other errors, we mark the volume with errors.
+ *
+ * On native 4Kn volumes with sub-4Kn MFT records, the containing 4Kn block is
+ * always written synchronously, regardless of @sync.
  */
 int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int sync)
 {
@@ -853,6 +888,13 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 #else
 	WARN_ON(!PageLocked(page));
 #endif
+
+	full_block_io = ntfs_is_4k_native(vol) &&
+			vol->mft_record_size < NTFS_4KN_BLOCK_SIZE;
+	if (full_block_io)
+		sync = 1;
+	if (folio_test_writeback(folio))
+		folio_wait_writeback(folio);
 
 	/*
 	 * If the struct ntfs_inode is clean no need to do anything.  If it is dirty,
@@ -933,7 +975,8 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 #endif
 
 	if (ni->mft_no < vol->mftmirr_size) {
-		err = ntfs_sync_mft_mirror_record(vol, folio, ni->mft_no);
+		err = ntfs_sync_mft_mirror_record(vol, folio, ni->mft_no,
+						  full_block_io);
 		if (err)
 			ctx->error = err;
 	}
@@ -3572,7 +3615,7 @@ flush_bio:
 
 			if (mft_no < vol->mftmirr_size) {
 				int sub_err = ntfs_sync_mft_mirror_record(
-					vol, folio, mft_no);
+					vol, folio, mft_no, false);
 
 				if (unlikely(sub_err) && !err)
 					err = sub_err;
