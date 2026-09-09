@@ -851,8 +851,7 @@ out_unlock:
 }
 
 static int ntfs_sync_mft_mirror_record(struct ntfs_volume *vol,
-				       struct folio *source, const u64 mft_no,
-				       bool full_block_io)
+				       struct folio *source, const u64 mft_no)
 {
 	u64 mirror_file_ofs = (u64)mft_no * vol->mft_record_size;
 	struct ntfs_mft_io_unit unit = {
@@ -860,13 +859,10 @@ static int ntfs_sync_mft_mirror_record(struct ntfs_volume *vol,
 		.len = vol->mft_record_size,
 	};
 
-	if (full_block_io) {
-		mirror_file_ofs =
-			round_down(mirror_file_ofs, (u64)NTFS_4KN_BLOCK_SIZE);
-		unit.folio_ofs =
-			round_down(unit.folio_ofs, NTFS_4KN_BLOCK_SIZE);
-		unit.len = NTFS_4KN_BLOCK_SIZE;
-	}
+	mirror_file_ofs =
+		round_down(mirror_file_ofs, (u64)vol->mft_io_unit_size);
+	unit.folio_ofs = round_down(unit.folio_ofs, vol->mft_io_unit_size);
+	unit.len = vol->mft_io_unit_size;
 
 	return ntfs_sync_mft_mirror_unit(vol, source, mirror_file_ofs, &unit);
 }
@@ -881,7 +877,6 @@ static bool ntfs_is_4k_native(const struct ntfs_volume *vol)
 }
 
 static int ntfs_prepare_mft_record_io_units(struct ntfs_inode *ni,
-					    bool full_block_io,
 					    struct ntfs_mft_io_unit units[2])
 {
 	struct ntfs_volume *vol = ni->vol;
@@ -898,14 +893,14 @@ static int ntfs_prepare_mft_record_io_units(struct ntfs_inode *ni,
 			return -EIO;
 
 	cluster_ofs = ntfs_bytes_to_cluster_off(vol, record_byte);
-	if (full_block_io) {
-		cluster_ofs = round_down(cluster_ofs, NTFS_4KN_BLOCK_SIZE);
+	if (vol->mft_io_unit_size > vol->mft_record_size) {
+		cluster_ofs = round_down(cluster_ofs, vol->mft_io_unit_size);
 		disk_byte = NTFS_CLU_TO_B(vol, ni->mft_lcn[0]) + cluster_ofs;
 		units[0] = (struct ntfs_mft_io_unit){
 			.sector = ntfs_bytes_to_bio_sector(disk_byte),
-			.folio_ofs =
-				round_down(ni->folio_ofs, NTFS_4KN_BLOCK_SIZE),
-			.len = NTFS_4KN_BLOCK_SIZE,
+			.folio_ofs = round_down(ni->folio_ofs,
+						vol->mft_io_unit_size),
+			.len = vol->mft_io_unit_size,
 		};
 		return 1;
 	}
@@ -957,7 +952,6 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 	struct ntfs_mft_write_ctx *ctx;
 	struct bio *parent, *child = NULL;
 	unsigned int nr_units;
-	bool full_block_io;
 	int err = 0;
 	u8 *kaddr;
 	struct mft_record *fixup_m;
@@ -967,9 +961,7 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 	WARN_ON(NInoAttr(ni));
 	WARN_ON(!folio_test_locked(folio));
 
-	full_block_io = ntfs_is_4k_native(vol) &&
-			vol->mft_record_size < NTFS_4KN_BLOCK_SIZE;
-	if (full_block_io)
+	if (vol->mft_io_unit_size > vol->mft_record_size)
 		sync = 1;
 	if (folio_test_writeback(folio))
 		folio_wait_writeback(folio);
@@ -983,7 +975,7 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 	if (!NInoTestClearDirty(ni))
 		goto done;
 
-	err = ntfs_prepare_mft_record_io_units(ni, full_block_io, units);
+	err = ntfs_prepare_mft_record_io_units(ni, units);
 	if (err < 0)
 		goto err_out;
 	nr_units = err;
@@ -1032,8 +1024,7 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 	}
 
 	if (ni->mft_no < vol->mftmirr_size) {
-		err = ntfs_sync_mft_mirror_record(vol, folio, ni->mft_no,
-						  full_block_io);
+		err = ntfs_sync_mft_mirror_record(vol, folio, ni->mft_no);
 		if (err)
 			ctx->error = err;
 	}
