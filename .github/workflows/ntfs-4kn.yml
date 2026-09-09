@@ -172,8 +172,8 @@ jobs:
         run: |
           set -euxo pipefail
           rm -rf guest-root ci-results/ntfs-4kn-initramfs.cpio.gz
-          sudo debootstrap --variant=minbase \
-            --include=bash,bc,busybox,coreutils,cpio,diffutils,e2fsprogs,findutils,gawk,grep,kmod,libaio1,libcap2-bin,perl,procps,psmisc,python3,sed,tar,util-linux,acl,attr,fio,xfsprogs,xz-utils \
+          sudo debootstrap --variant=minbase --components=main,universe \
+            --include=bash,bc,busybox-static,coreutils,cpio,diffutils,e2fsprogs,findutils,gawk,grep,kmod,libaio1t64,libcap2-bin,perl,procps,psmisc,python3,sed,tar,util-linux,acl,attr,fio,xfsprogs,xz-utils \
             noble guest-root http://archive.ubuntu.com/ubuntu
           sudo mkdir -p \
             guest-root/lib/modules/$KERNEL_VERSION/extra \
