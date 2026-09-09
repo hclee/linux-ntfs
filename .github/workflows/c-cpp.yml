@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       test_case:
-        description: "Run one generic case five times"
+        description: "Run one generic case five times, or all listed cases once"
         default: generic/013
         required: true
         type: string
@@ -84,7 +84,7 @@ jobs:
         cd ..
         sudo umount ./full_test/
         sudo ntfsck -n "$loop"
-    - name: native 4kn-c4k-m1k xfstests (one setup, five repetitions)
+    - name: native 4kn-c4k-m1k xfstests (one setup, sequential profile)
       env:
         TEST_CASE: ${{ github.event.inputs.test_case || 'generic/013' }}
         TEST_REPEATS: 5

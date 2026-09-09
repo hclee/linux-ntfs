@@ -55,7 +55,7 @@ if [[ ! -f "$TESTS_FILE" ]]; then
 fi
 
 if [[ -z "$TEST_CASE" ]]; then
-	echo "TEST_CASE is required; the full test profile is not supported" >&2
+	echo "TEST_CASE is required" >&2
 	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
 	exit 2
 fi
@@ -64,12 +64,17 @@ if [[ ! "$TEST_REPEATS" =~ ^[1-9][0-9]*$ ]]; then
 	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
 	exit 2
 fi
-if ! grep -Fxq "$TEST_CASE" "$TESTS_FILE"; then
-	echo "Requested case is not in the full profile: $TEST_CASE" >&2
-	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
-	exit 2
+if [[ "$TEST_CASE" == all ]]; then
+	cp "$TESTS_FILE" "$RESULTS_DIR/tests.list"
+	TEST_REPEATS=1
+else
+	if ! grep -Fxq "$TEST_CASE" "$TESTS_FILE"; then
+		echo "Requested case is not in the full profile: $TEST_CASE" >&2
+		printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
+		exit 2
+	fi
+	printf '%s\n' "$TEST_CASE" > "$RESULTS_DIR/tests.list"
 fi
-printf '%s\n' "$TEST_CASE" > "$RESULTS_DIR/tests.list"
 printf 'test_case=%s\ntest_repeats=%s\n' "$TEST_CASE" "$TEST_REPEATS" \
 	> "$RESULTS_DIR/repetitions.manifest"
 
@@ -136,6 +141,16 @@ format_device()
 		exit 2
 	fi
 	cat "$log"
+}
+
+reformat_devices()
+{
+	sudo umount "$TEST_MNT" 2>/dev/null || true
+	sudo umount "$SCRATCH_MNT" 2>/dev/null || true
+	format_device test "$TEST_DEV"
+	format_device scratch "$SCRATCH_DEV"
+	check_boot_geometry test "$TEST_DEV"
+	check_boot_geometry scratch "$SCRATCH_DEV"
 }
 
 format_device test "$TEST_DEV"
@@ -239,7 +254,7 @@ while IFS= read -r test_case; do
 			status=PASS
 		fi
 
-		attempt_dmesg="$RESULTS_DIR/dmesg-attempt-${iteration}.log"
+		attempt_dmesg="$RESULTS_DIR/${safe_case}.attempt-${iteration}.dmesg"
 		sudo dmesg --color=never > "$attempt_dmesg" 2>&1 || true
 		if grep -Eiq \
 			'BUG:|Oops:|kernel panic|KASAN:|UBSAN:|general protection fault|Call Trace:' \
@@ -256,14 +271,13 @@ while IFS= read -r test_case; do
 		for suffix in full out.bad dmesg; do
 			result="$XFSTESTS_DIR/results/generic/$result_name.$suffix"
 			if [[ -f "$result" ]]; then
-				cp "$result" \
+				sudo cp "$result" \
 					"$artifact_dir/${result_name}.attempt-${iteration}.${suffix}"
 			fi
 		done
-		if [[ "$status" != PASS ]]; then
-			printf 'Stopping after iteration %s with status %s\n' \
-				"$iteration" "$status"
-			break
+		if [[ "$status" == FAIL || "$status" == NOTRUN ]]; then
+			echo "Reformatting native 4Kn devices after $test_case ($status)"
+			reformat_devices
 		fi
 	done
 done < "$RESULTS_DIR/tests.list"
