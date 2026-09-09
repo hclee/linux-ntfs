@@ -122,7 +122,9 @@ fi
 
 {
 	printf 'test_rc=%s\n' "$test_rc"
-	if find "$RESULT_MNT/xfstests-results" -type f -name '*.out.bad' | grep -q .; then
+	if [ "$test_rc" -ne 0 ] ||
+		find "$RESULT_MNT/xfstests-results" -type f -name '*.out.bad' |
+			grep -q .; then
 		echo NTFS_XFSTESTS_FAIL
 		echo 'failed_cases:'
 		find "$RESULT_MNT/xfstests-results" -type f -name '*.out.bad' \
