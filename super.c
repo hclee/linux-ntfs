@@ -641,10 +641,10 @@ static char *read_ntfs_boot_sector(struct super_block *sb,
 	return boot_sector;
 }
 
-static bool ntfs_validate_4kn_geometry(const struct ntfs_volume *vol)
+static bool ntfs_validate_4kn_geometry(const struct ntfs_volume *vol,
+				       const unsigned int logical_block_size)
 {
 	struct super_block *sb = vol->sb;
-	unsigned int logical_block_size = bdev_logical_block_size(sb->s_bdev);
 
 	if (logical_block_size != NTFS_4KN_BLOCK_SIZE)
 		return true;
@@ -678,9 +678,11 @@ static bool parse_ntfs_boot_sector(struct ntfs_volume *vol,
 		const struct ntfs_boot_sector *b)
 {
 	unsigned int sectors_per_cluster, sectors_per_cluster_bits, nr_hidden_sects;
+	unsigned int logical_block_size;
 	int clusters_per_mft_record, clusters_per_index_record;
 	u64 ll;
 
+	logical_block_size = bdev_logical_block_size(vol->sb->s_bdev);
 	vol->sector_size = le16_to_cpu(b->bpb.bytes_per_sector);
 	vol->sector_size_bits = ffs(vol->sector_size) - 1;
 	ntfs_debug("vol->sector_size = %i (0x%x)", vol->sector_size,
@@ -753,8 +755,16 @@ static bool parse_ntfs_boot_sector(struct ntfs_volume *vol,
 		ntfs_warning(vol->sb, "Mft record size (%i) is smaller than the sector size (%i).",
 				vol->mft_record_size, vol->sector_size);
 	}
-	if (!ntfs_validate_4kn_geometry(vol))
+	if (!ntfs_validate_4kn_geometry(vol, logical_block_size))
 		return false;
+
+	/*
+	 * Cache the unit used by MFT writes after validating the volume
+	 * geometry. Keep record-sized I/O for non-native volumes.
+	 */
+	vol->mft_io_unit_size = vol->mft_record_size;
+	if (logical_block_size == NTFS_4KN_BLOCK_SIZE)
+		vol->mft_io_unit_size = NTFS_4KN_BLOCK_SIZE;
 
 	clusters_per_index_record = b->clusters_per_index_record;
 	ntfs_debug("clusters_per_index_record = %i (0x%x)",

@@ -111,6 +111,12 @@ struct ntfs_volume {
 	u32 mft_record_size;
 	u32 mft_record_size_mask;
 	u8 mft_record_size_bits;
+	/*
+	 * Unit size used for MFT I/O. This is normally the MFT record
+	 * size, or the containing 4KiB block for validated native 4Kn
+	 * volumes with sub-4KiB MFT records.
+	 */
+	u32 mft_io_unit_size;
 	u32 index_record_size;
 	u32 index_record_size_mask;
 	u8 index_record_size_bits;
