@@ -533,6 +533,9 @@ static ssize_t ntfs_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	    iocb->ki_flags & IOCB_DIRECT)
 		return -EOPNOTSUPP;
 
+	if ((iocb->ki_flags & IOCB_DIRECT) && !user_backed_iter(to))
+		iocb->ki_flags &= ~IOCB_DIRECT;
+
 	inode_lock_shared(vi);
 
 	if (iocb->ki_flags & IOCB_DIRECT) {
