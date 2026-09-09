@@ -1,0 +1,202 @@
+name: NTFS native 4Kn
+
+on:
+  push:
+    branches:
+      - ci/4kn-c4k-m1k
+      - test-4kn-*
+      - port/4kn-c4k-m1k-1to1
+  workflow_dispatch:
+    inputs:
+      test_case:
+        description: "xfstests case to validate; blank selects the full profile"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  KERNEL_VERSION: 6.18.22
+  NTFS_PROGS_REPOSITORY: hclee/ntfsprogs-plus
+  NTFS_PROGS_REF: 1c7d03669425
+
+jobs:
+  geometry:
+    name: "6.18.22 native 4Kn geometry"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out linux-ntfs
+        uses: actions/checkout@v4
+
+      - name: Install build and QEMU dependencies
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            autoconf automake bc bison build-essential busybox-static \
+            cpio curl flex gzip libelf-dev libfuse-dev libgcrypt20-dev \
+            libncurses-dev libssl-dev libtool libtool-bin pkg-config \
+            qemu-system-x86 qemu-utils tar xz-utils uuid-dev
+
+      - name: Prepare requested test selection
+        env:
+          REQUESTED_CASE: ${{ inputs.test_case }}
+        run: |
+          set -eux
+          mkdir -p ci-results
+          if [ -n "$REQUESTED_CASE" ]; then
+            grep -Fx "$REQUESTED_CASE" .github/xfstests/ntfs-geometry-full.list
+            printf '%s\n' "$REQUESTED_CASE" > ci-results/tests.list
+          else
+            cp .github/xfstests/ntfs-geometry-full.list ci-results/tests.list
+          fi
+          {
+            printf 'test_case=%s\n' "$REQUESTED_CASE"
+            printf 'kernel=%s\n' "$KERNEL_VERSION"
+          } > ci-results/request.txt
+
+      - name: Check out pinned ntfsprogs-plus
+        run: |
+          set -eux
+          git clone --filter=blob:none \
+            "https://github.com/${NTFS_PROGS_REPOSITORY}.git" ntfsprogs-plus
+          git -C ntfsprogs-plus fetch --depth=1 origin "$NTFS_PROGS_REF"
+          git -C ntfsprogs-plus checkout --detach "$NTFS_PROGS_REF"
+          git -C ntfsprogs-plus rev-parse HEAD | tee ci-results/ntfsprogs-plus.sha
+
+      - name: Build and verify mkntfs
+        run: |
+          set -euxo pipefail
+          cd ntfsprogs-plus
+          ./autogen.sh
+          ./configure --prefix="$GITHUB_WORKSPACE/ntfsprogs-install"
+          make -j"$(nproc)"
+          make install
+          cd "$GITHUB_WORKSPACE"
+          MKNTFS=$(find ntfsprogs-install -type f -name mkntfs -perm -111 | head -1)
+          test -n "$MKNTFS"
+          "$MKNTFS" --help | tee ci-results/mkntfs-help.txt
+          grep -F -- '--mft-record-size' ci-results/mkntfs-help.txt
+          printf 'mkntfs=%s\n' "$GITHUB_WORKSPACE/$MKNTFS" >> "$GITHUB_ENV"
+
+          truncate -s $((4096 * 32768)) ci-results/formatter.img
+          "$MKNTFS" -F -Q -s 4096 -c 4096 -r 1024 \
+            ci-results/formatter.img 32768 > ci-results/mkntfs.log 2>&1
+          python3 - ci-results/formatter.img > ci-results/boot-geometry.txt <<'PY'
+          import struct
+          import sys
+
+          with open(sys.argv[1], "rb", buffering=0) as stream:
+              boot = stream.read(4096)
+          sector = struct.unpack_from("<H", boot, 11)[0]
+          cluster = sector * boot[13]
+          encoding = struct.unpack_from("<b", boot, 64)[0]
+          record = 1 << -encoding if encoding < 0 else cluster * encoding
+          print(f"bytes_per_sector={sector}")
+          print(f"cluster_size={cluster}")
+          print(f"mft_record_size={record}")
+          if (sector, cluster, record) != (4096, 4096, 1024):
+              raise SystemExit("unexpected 4kn-c4k-m1k boot geometry")
+          PY
+
+      - name: Cache Linux 6.18.22 source
+        uses: actions/cache@v4
+        with:
+          path: linux-6.18.22.tar.xz
+          key: linux-${{ env.KERNEL_VERSION }}-${{ runner.arch }}
+
+      - name: Download Linux 6.18.22
+        run: |
+          set -eux
+          if [ ! -s linux-6.18.22.tar.xz ]; then
+            curl --fail --location --retry 2 \
+              --connect-timeout 20 --max-time 300 \
+              "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz" \
+              -o linux-6.18.22.tar.xz
+          fi
+          test -s linux-6.18.22.tar.xz
+          tar -tf linux-6.18.22.tar.xz >/dev/null
+
+      - name: Build 6.18.22 kernel and NTFS module
+        run: |
+          set -euxo pipefail
+          tar -xf linux-6.18.22.tar.xz
+          mkdir -p "linux-${KERNEL_VERSION}/fs/ntfs"
+          git ls-files -z | tar --null --files-from=- -cf - \
+            | tar -xf - -C "linux-${KERNEL_VERSION}/fs/ntfs"
+          cd "linux-${KERNEL_VERSION}"
+          grep -q '^source "fs/ntfs/Kconfig"' fs/Kconfig || \
+            printf '\nsource "fs/ntfs/Kconfig"\n' >> fs/Kconfig
+          grep -q '^obj-\$(CONFIG_NTFS_FS).*ntfs/' fs/Makefile || \
+            printf '\nobj-$(CONFIG_NTFS_FS) += ntfs/\n' >> fs/Makefile
+          make defconfig
+          scripts/config --enable CONFIG_BLK_DEV_INITRD
+          scripts/config --enable CONFIG_DEVTMPFS
+          scripts/config --enable CONFIG_DEVTMPFS_MOUNT
+          scripts/config --enable CONFIG_VIRTIO
+          scripts/config --enable CONFIG_VIRTIO_BLK
+          scripts/config --enable CONFIG_VIRTIO_PCI
+          scripts/config --module CONFIG_NTFS_FS
+          make olddefconfig
+          make -j"$(nproc)" bzImage fs/ntfs/ntfs.ko \
+            2>&1 | tee "$GITHUB_WORKSPACE/ci-results/kernel-build.log"
+          cp .config "$GITHUB_WORKSPACE/ci-results/kernel.config"
+          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/ci-results/bzImage"
+
+      - name: Build geometry probe initramfs
+        run: |
+          set -eux
+          rm -rf initramfs initramfs.cpio.gz
+          mkdir -p initramfs/{bin,dev,proc,sys}
+          BUSYBOX=$(command -v busybox)
+          cp "$BUSYBOX" initramfs/bin/busybox
+          for app in sh mount cat basename sleep poweroff; do
+            ln -s busybox "initramfs/bin/$app"
+          done
+          cp .github/scripts/ntfs-4kn-init initramfs/init
+          chmod 0755 initramfs/init
+          (
+            cd initramfs
+            find . -print0 | cpio --null -o -H newc
+          ) | gzip -9 > initramfs.cpio.gz
+
+      - name: Boot QEMU and verify 4096/4096 devices
+        run: |
+          set -euxo pipefail
+          mkdir -p ci-results
+          qemu-system-x86_64 -version | tee ci-results/qemu-version.txt
+          qemu-system-x86_64 -device virtio-blk-pci,help \
+            > ci-results/virtio-blk-help.txt
+          truncate -s 256M ci-results/qemu-test.img
+          truncate -s 256M ci-results/qemu-scratch.img
+          set +e
+          timeout --signal=TERM --kill-after=10s 180s \
+            qemu-system-x86_64 \
+            -machine q35 \
+            -m 512M \
+            -no-reboot \
+            -nographic \
+            -serial mon:stdio \
+            -kernel ci-results/bzImage \
+            -initrd initramfs.cpio.gz \
+            -append "console=ttyS0 rdinit=/init panic=-1" \
+            -drive file=ci-results/qemu-test.img,if=none,format=raw,id=test \
+            -device virtio-blk-pci,drive=test,logical_block_size=4096,physical_block_size=4096 \
+            -drive file=ci-results/qemu-scratch.img,if=none,format=raw,id=scratch \
+            -device virtio-blk-pci,drive=scratch,logical_block_size=4096,physical_block_size=4096 \
+            > ci-results/qemu-console.log 2>&1
+          qemu_rc=$?
+          set -e
+          grep -F 'NTFS_4KN_GEOMETRY_PASS' ci-results/qemu-console.log
+          printf 'qemu_exit=%s\n' "$qemu_rc" >> ci-results/qemu-console.log
+
+      - name: Upload native 4Kn setup artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ntfs-4kn-6.18.22-setup
+          path: ci-results

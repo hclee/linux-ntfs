@@ -1,0 +1,37 @@
+#!/bin/sh
+
+set -eu
+
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+
+i=0
+while [ "$i" -lt 60 ]; do
+	if [ -b /dev/vda ] && [ -b /dev/vdb ]; then
+		break
+	fi
+	i=$((i + 1))
+	sleep 1
+done
+
+if [ ! -b /dev/vda ] || [ ! -b /dev/vdb ]; then
+	echo "NTFS_4KN_GEOMETRY_FAIL: virtio block devices not found"
+	poweroff -f
+	exit 1
+fi
+
+for dev in /dev/vda /dev/vdb; do
+	name=$(basename "$dev")
+	logical=$(cat "/sys/class/block/$name/queue/logical_block_size")
+	physical=$(cat "/sys/class/block/$name/queue/physical_block_size")
+	echo "NTFS_4KN_DEVICE=$dev logical=$logical physical=$physical"
+	if [ "$logical" != 4096 ] || [ "$physical" != 4096 ]; then
+		echo "NTFS_4KN_GEOMETRY_FAIL: $dev reports $logical/$physical"
+		poweroff -f
+		exit 1
+	fi
+done
+
+echo "NTFS_4KN_GEOMETRY_PASS"
+poweroff -f
