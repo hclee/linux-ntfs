@@ -502,12 +502,6 @@ void __mark_mft_record_dirty(struct ntfs_inode *ni)
 	__mark_inode_dirty(VFS_I(base_ni), I_DIRTY_DATASYNC);
 }
 
-struct ntfs_mft_io_unit {
-	sector_t sector;
-	unsigned int folio_ofs;
-	unsigned int len;
-};
-
 /*
  * ntfs_bio_end_io - bio completion callback for MFT record writes
  *
@@ -516,7 +510,7 @@ struct ntfs_mft_io_unit {
  * evict the inode and release the folio while I/O is still in flight,
  * potentially causing data corruption or use-after-free.
  */
-static void ntfs_bio_end_io(struct bio *bio)
+static void __maybe_unused ntfs_bio_end_io(struct bio *bio)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 	if (bio->bi_private)
@@ -528,95 +522,22 @@ static void ntfs_bio_end_io(struct bio *bio)
 	bio_put(bio);
 }
 
-struct ntfs_mft_write_ctx {
-	struct folio *folio;
-	struct address_space *mapping;
-	struct ntfs_volume *vol;
-	struct completion *done;
-	int error;
-	bool writeback_started;
-	struct bio bio;
-};
-
-static struct bio_set ntfs_mft_bioset;
-
-int ntfs_mft_bioset_init(void)
-{
-	return bioset_init(&ntfs_mft_bioset, BIO_POOL_SIZE,
-			   offsetof(struct ntfs_mft_write_ctx, bio),
-			   BIOSET_NEED_BVECS);
-}
-
-void ntfs_mft_bioset_exit(void)
-{
-	bioset_exit(&ntfs_mft_bioset);
-}
-
-static void ntfs_mft_end_io(struct bio *bio)
-{
-	struct ntfs_mft_write_ctx *ctx =
-		container_of(bio, struct ntfs_mft_write_ctx, bio);
-	int err;
-
-	if (bio->bi_status)
-		err = blk_status_to_errno(bio->bi_status);
-	else
-		err = ctx->error;
-	if (err) {
-		mapping_set_error(ctx->mapping, err);
-		NVolSetErrors(ctx->vol);
-		ntfs_error(ctx->vol->sb, "I/O error while writing MFT: %d",
-			   err);
-	}
-
-	folio_end_writeback(ctx->folio);
-	folio_put(ctx->folio);
-	if (ctx->done)
-		complete(ctx->done);
-	else
-		bio_put(bio);
-}
-
-static void ntfs_start_mft_writeback(struct ntfs_mft_write_ctx *ctx)
-{
-	if (ctx->writeback_started)
-		return;
-
-	folio_get(ctx->folio);
-	folio_start_writeback(ctx->folio);
-	ctx->writeback_started = true;
-}
-
-static struct bio *ntfs_alloc_mft_parent_bio(struct ntfs_volume *vol,
-					     struct folio *folio,
-					     struct completion *done)
-{
-	struct ntfs_mft_write_ctx *ctx;
-	struct bio *parent;
-
-	parent = bio_alloc_bioset(vol->sb->s_bdev, 1, REQ_OP_WRITE, GFP_NOIO,
-				  &ntfs_mft_bioset);
-	if (!parent)
-		return NULL;
-
-	ctx = container_of(parent, struct ntfs_mft_write_ctx, bio);
-	ctx->folio = folio;
-	ctx->mapping = folio->mapping;
-	ctx->vol = vol;
-	ctx->done = done;
-	ctx->error = 0;
-	ctx->writeback_started = false;
-	parent->bi_end_io = ntfs_mft_end_io;
-	return parent;
-}
-
 /*
- * Write one MFT I/O unit to $MFTMirr.  The source folio contains the MST
- * protected image that will be written to $MFT.
+ * ntfs_sync_mft_mirror - synchronize an mft record to the mft mirror
+ * @vol:	ntfs volume on which the mft record to synchronize resides
+ * @mft_no:	mft record number of mft record to synchronize
+ * @m:		mapped, mst protected (extent) mft record to synchronize
+ *
+ * Write the mapped, mst protected (extent) mft record @m with mft record
+ * number @mft_no to the mft mirror ($MFTMirr) of the ntfs volume @vol.
+ *
+ * On success return 0.  On error return -errno and set the volume errors flag
+ * in the ntfs volume @vol.
+ *
+ * NOTE:  We always perform synchronous i/o.
  */
-static int ntfs_sync_mft_mirror_unit(struct ntfs_volume *vol,
-				     struct folio *source, u64 mirror_file_ofs,
-				     const struct ntfs_mft_io_unit *unit)
+int ntfs_sync_mft_mirror(struct ntfs_volume *vol, const u64 mft_no,
+		struct mft_record *m)
 {
 	u8 *kmirr;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
@@ -629,26 +550,10 @@ static int ntfs_sync_mft_mirror_unit(struct ntfs_volume *vol,
 	int err = 0;
 	struct bio *bio;
 
-	if (unlikely(!vol->mftmirr_ino))
-		return -EIO;
+	ntfs_debug("Entering for inode 0x%llx.", mft_no);
 
-	mirror_size = (u64)vol->mftmirr_size * vol->mft_record_size;
-	if (mirror_file_ofs >= mirror_size ||
-	    unit->len > mirror_size - mirror_file_ofs)
-		return -EIO;
-	if (unit->folio_ofs + unit->len > folio_size(source))
-		return -EIO;
-
-	mirror = read_mapping_folio(vol->mftmirr_ino->i_mapping,
-				    mirror_file_ofs >> PAGE_SHIFT, NULL);
-	if (IS_ERR(mirror))
-		return PTR_ERR(mirror);
-
-	folio_lock(mirror);
-	if (folio_test_writeback(mirror))
-		folio_wait_writeback(mirror);
-	mirror_ofs = mirror_file_ofs - folio_pos(mirror);
-	if (mirror_ofs + unit->len > folio_size(mirror)) {
+	if (unlikely(!vol->mftmirr_ino)) {
+		/* This could happen during umount... */
 		err = -EIO;
 		goto err_out;
 	}
@@ -770,6 +675,181 @@ err_out:
 	return err;
 }
 
+/*
+ * write_mft_record_nolock - write out a mapped (extent) mft record
+ * @ni:		ntfs inode describing the mapped (extent) mft record
+ * @m:		mapped (extent) mft record to write
+ * @sync:	if true, wait for i/o completion
+ *
+ * Write the mapped (extent) mft record @m described by the (regular or extent)
+ * ntfs inode @ni to backing store.  If the mft record @m has a counterpart in
+ * the mft mirror, that is also updated.
+ *
+ * We only write the mft record if the ntfs inode @ni is dirty.
+ *
+ * On success, clean the mft record and return 0.
+ * On error (specifically ENOMEM), we redirty the record so it can be retried.
+ * For other errors, we mark the volume with errors.
+ */
+struct ntfs_mft_io_unit {
+	sector_t sector;
+	unsigned int folio_ofs;
+	unsigned int len;
+};
+
+struct ntfs_mft_write_ctx {
+	struct folio *folio;
+	struct address_space *mapping;
+	struct ntfs_volume *vol;
+	struct completion *done;
+	int error;
+	bool writeback_started;
+	struct bio bio;
+};
+
+static struct bio_set ntfs_mft_bioset;
+
+int ntfs_mft_bioset_init(void)
+{
+	return bioset_init(&ntfs_mft_bioset, BIO_POOL_SIZE,
+			   offsetof(struct ntfs_mft_write_ctx, bio),
+			   BIOSET_NEED_BVECS);
+}
+
+void ntfs_mft_bioset_exit(void)
+{
+	bioset_exit(&ntfs_mft_bioset);
+}
+
+static void ntfs_mft_end_io(struct bio *bio)
+{
+	struct ntfs_mft_write_ctx *ctx =
+		container_of(bio, struct ntfs_mft_write_ctx, bio);
+	int err;
+
+	if (bio->bi_status)
+		err = blk_status_to_errno(bio->bi_status);
+	else
+		err = ctx->error;
+	if (err) {
+		mapping_set_error(ctx->mapping, err);
+		NVolSetErrors(ctx->vol);
+		ntfs_error(ctx->vol->sb, "I/O error while writing MFT: %d",
+			   err);
+	}
+
+	folio_end_writeback(ctx->folio);
+	folio_put(ctx->folio);
+	if (ctx->done)
+		complete(ctx->done);
+	else
+		bio_put(bio);
+}
+
+static void ntfs_start_mft_writeback(struct ntfs_mft_write_ctx *ctx)
+{
+	if (ctx->writeback_started)
+		return;
+
+	folio_get(ctx->folio);
+	folio_start_writeback(ctx->folio);
+	ctx->writeback_started = true;
+}
+
+static struct bio *ntfs_alloc_mft_parent_bio(struct ntfs_volume *vol,
+					     struct folio *folio,
+					     struct completion *done)
+{
+	struct ntfs_mft_write_ctx *ctx;
+	struct bio *parent;
+
+	parent = bio_alloc_bioset(vol->sb->s_bdev, 1, REQ_OP_WRITE, GFP_NOIO,
+				  &ntfs_mft_bioset);
+	if (!parent)
+		return NULL;
+
+	ctx = container_of(parent, struct ntfs_mft_write_ctx, bio);
+	ctx->folio = folio;
+	ctx->mapping = folio->mapping;
+	ctx->vol = vol;
+	ctx->done = done;
+	ctx->error = 0;
+	ctx->writeback_started = false;
+	parent->bi_end_io = ntfs_mft_end_io;
+	return parent;
+}
+
+/*
+ * Write one MFT I/O unit to $MFTMirr.  The source folio contains the MST
+ * protected image that will be written to $MFT.
+ */
+static int ntfs_sync_mft_mirror_unit(struct ntfs_volume *vol,
+				     struct folio *source, u64 mirror_file_ofs,
+				     const struct ntfs_mft_io_unit *unit)
+{
+	struct folio *mirror;
+	struct bio_vec bvec;
+	struct bio bio;
+	u64 mirror_size;
+	unsigned int mirror_ofs;
+	u8 *src, *dst;
+	int err;
+
+	if (unlikely(!vol->mftmirr_ino))
+		return -EIO;
+
+	mirror_size = (u64)vol->mftmirr_size * vol->mft_record_size;
+	if (mirror_file_ofs >= mirror_size ||
+	    unit->len > mirror_size - mirror_file_ofs)
+		return -EIO;
+	if (unit->folio_ofs + unit->len > folio_size(source))
+		return -EIO;
+
+	mirror = read_mapping_folio(vol->mftmirr_ino->i_mapping,
+				    mirror_file_ofs >> PAGE_SHIFT, NULL);
+	if (IS_ERR(mirror))
+		return PTR_ERR(mirror);
+
+	folio_lock(mirror);
+	if (folio_test_writeback(mirror))
+		folio_wait_writeback(mirror);
+	mirror_ofs = mirror_file_ofs - folio_pos(mirror);
+	if (mirror_ofs + unit->len > folio_size(mirror)) {
+		err = -EIO;
+		goto out_unlock;
+	}
+
+	folio_clear_uptodate(mirror);
+	src = kmap_local_folio(source, unit->folio_ofs);
+	dst = kmap_local_folio(mirror, mirror_ofs);
+	memcpy(dst, src, unit->len);
+	kunmap_local(dst);
+	kunmap_local(src);
+
+	bio_init(&bio, vol->sb->s_bdev, &bvec, 1, REQ_OP_WRITE);
+	bio.bi_iter.bi_sector = ntfs_bytes_to_bio_sector(
+		NTFS_CLU_TO_B(vol, vol->mftmirr_lcn) + mirror_file_ofs);
+	if (!bio_add_folio(&bio, mirror, unit->len, mirror_ofs))
+		err = -EIO;
+	else
+		err = submit_bio_wait(&bio);
+	bio_uninit(&bio);
+
+	/*
+	 * The in-memory mirror is now valid because we just memcpy()'d the
+	 * mst-protected mft record into it.  Mark the folio uptodate even on
+	 * write error so a subsequent read_mapping_folio() does not refetch
+	 * the stale on-disk mirror and overwrite this copy.  The error is
+	 * propagated to the caller via @err.
+	 */
+	folio_mark_uptodate(mirror);
+
+out_unlock:
+	folio_unlock(mirror);
+	folio_put(mirror);
+	return err;
+}
+
 static int ntfs_sync_mft_mirror_record(struct ntfs_volume *vol,
 				       struct folio *source, const u64 mft_no,
 				       bool full_block_io)
@@ -871,23 +951,21 @@ static int ntfs_prepare_mft_record_io_units(struct ntfs_inode *ni,
 int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int sync)
 {
 	struct ntfs_volume *vol = ni->vol;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 	struct folio *folio = ni->folio;
-#else
-	struct page *page = ni->page;
-#endif
-	int err = 0, i = 0;
+	DECLARE_COMPLETION_ONSTACK(done);
+	struct ntfs_mft_io_unit units[2];
+	struct ntfs_mft_write_ctx *ctx;
+	struct bio *parent, *child = NULL;
+	unsigned int nr_units;
+	bool full_block_io;
+	int err = 0;
 	u8 *kaddr;
 	struct mft_record *fixup_m;
 
 	ntfs_debug("Entering for inode 0x%llx.", ni->mft_no);
 
 	WARN_ON(NInoAttr(ni));
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 	WARN_ON(!folio_test_locked(folio));
-#else
-	WARN_ON(!PageLocked(page));
-#endif
 
 	full_block_io = ntfs_is_4k_native(vol) &&
 			vol->mft_record_size < NTFS_4KN_BLOCK_SIZE;
@@ -905,13 +983,13 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 	if (!NInoTestClearDirty(ni))
 		goto done;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	err = ntfs_prepare_mft_record_io_units(ni, full_block_io, units);
+	if (err < 0)
+		goto err_out;
+	nr_units = err;
+
 	kaddr = kmap_local_folio(folio, 0);
 	fixup_m = (struct mft_record *)(kaddr + ni->folio_ofs);
-#else
-	kaddr = kmap(page);
-	fixup_m = (struct mft_record *)(kaddr + ni->page_ofs);
-#endif
 	memcpy(fixup_m, m, vol->mft_record_size);
 
 	/* Apply the mst protection fixups. */
@@ -921,18 +999,12 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 		goto unmap_err_out;
 	}
 
-	folio_size = vol->mft_record_size / ni->mft_lcn_count;
-	while (i < ni->mft_lcn_count) {
-		unsigned int clu_off;
-
-		clu_off = (unsigned int)((s64)ni->mft_no * vol->mft_record_size + offset) &
-			vol->cluster_size_mask;
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-		bio = bio_alloc(vol->sb->s_bdev, 1, REQ_OP_WRITE, GFP_NOIO);
-		bio->bi_iter.bi_sector =
-			ntfs_bytes_to_bio_sector(NTFS_CLU_TO_B(vol, ni->mft_lcn[i]) +
-						 clu_off);
+	parent = ntfs_alloc_mft_parent_bio(vol, folio, sync ? &done : NULL);
+	if (!parent) {
+		err = -ENOMEM;
+		goto unmap_err_out;
+	}
+	ctx = container_of(parent, struct ntfs_mft_write_ctx, bio);
 
 	parent->bi_iter.bi_sector = units[0].sector;
 	if (!bio_add_folio(parent, folio, units[0].len, units[0].folio_ofs)) {
@@ -957,22 +1029,7 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 				goto put_bios_out;
 			}
 		}
-#else
-		bio = bio_alloc(vol->sb->s_bdev, 1, REQ_OP_WRITE, GFP_NOIO);
-		bio->bi_iter.bi_sector =
-			ntfs_bytes_to_bio_sector(NTFS_CLU_TO_B(vol, ni->mft_lcn[i]) +
-					 clu_off);
-		if (!bio) {
-			err = -ENOMEM;
-			goto err_out;
-		}
-
-		if (!bio_add_page(bio, page, folio_size,
-				  ni->page_ofs + offset)) {
-			err = -EIO;
-			goto put_bio_out;
-		}
-#endif
+	}
 
 	if (ni->mft_no < vol->mftmirr_size) {
 		err = ntfs_sync_mft_mirror_record(vol, folio, ni->mft_no,
@@ -983,22 +1040,10 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 
 	kunmap_local(kaddr);
 
-			bio_put(bio);
-			if (unlikely(sub_err) && !err)
-				err = sub_err;
-		} else {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-			folio_get(folio);
-			bio->bi_private = folio;
-#else
-			get_page(page);
-			bio->bi_private = page;
-#endif
-			bio->bi_end_io = ntfs_bio_end_io;
-			submit_bio(bio);
-		}
-		offset += vol->cluster_size;
-		i++;
+	ntfs_start_mft_writeback(ctx);
+	if (child) {
+		bio_chain(child, parent);
+		submit_bio(child);
 	}
 	submit_bio(parent);
 
@@ -1008,11 +1053,7 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 			err = blk_status_to_errno(parent->bi_status);
 		bio_put(parent);
 	}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	kunmap_local(kaddr);
-#else
-	kunmap(page);
-#endif
+
 	if (unlikely(err)) {
 		/* I/O error during writing.  This is really bad! */
 		ntfs_error(vol->sb,
@@ -2501,12 +2542,6 @@ static int ntfs_mft_record_format(const struct ntfs_volume *vol, const s64 mft_n
 		return PTR_ERR(folio);
 	}
 	folio_lock(folio);
-	/*
-	 * ntfs_write_mft_block() may still submit a BIO sourced from this
-	 * folio after starting writeback and unlocking it.
-	 */
-	if (folio_test_writeback(folio))
-		folio_wait_writeback(folio);
 	folio_clear_uptodate(folio);
 	m = (struct mft_record *)((u8 *)kmap_local_folio(folio, 0) + ofs);
 #else
@@ -3057,12 +3092,6 @@ mft_rec_already_initialized:
 		goto undo_mftbmp_alloc;
 	}
 	folio_lock(folio);
-	/*
-	 * Do not modify the folio while an MFT writeback BIO still references
-	 * it as its source buffer.
-	 */
-	if (folio_test_writeback(folio))
-		folio_wait_writeback(folio);
 	folio_clear_uptodate(folio);
 	m = (struct mft_record *)((u8 *)kmap_local_folio(folio, 0) + ofs);
 #else
@@ -3446,8 +3475,20 @@ sync_rollback:
 	return err;
 }
 
-static s64 lcn_from_index(struct ntfs_volume *vol, struct ntfs_inode *ni,
-			  unsigned long index)
+static __maybe_unused s64 lcn_from_index(struct ntfs_volume *vol,
+				 struct ntfs_inode *ni, unsigned long index)
+{
+	s64 vcn = ntfs_pidx_to_cluster(vol, index);
+	s64 lcn;
+
+	down_read(&ni->runlist.lock);
+	lcn = ntfs_attr_vcn_to_lcn_nolock(ni, vcn, false);
+	up_read(&ni->runlist.lock);
+	return lcn;
+}
+
+static bool ntfs_add_mft_io_unit(struct bio *bio, struct folio *folio,
+				 const struct ntfs_mft_io_unit *unit)
 {
 	if (!bio->bi_iter.bi_size)
 		bio->bi_iter.bi_sector = unit->sector;
@@ -3613,11 +3654,12 @@ static void ntfs_mft_write_error(struct ntfs_volume *vol,
  */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
-static int ntfs_write_mft_block(struct folio *folio, struct writeback_control *wbc)
+#define NTFS_MFT_WB_ARGS struct folio *folio, struct writeback_control *wbc
 #else
-static int ntfs_write_mft_block(struct folio *folio, struct writeback_control *wbc,
-		void *data)
+#define NTFS_MFT_WB_ARGS struct folio *folio, struct writeback_control *wbc, void *data
 #endif
+
+static int ntfs_write_mft_block(NTFS_MFT_WB_ARGS)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
 	struct address_space *mapping = folio->mapping;
@@ -3627,22 +3669,31 @@ static int ntfs_write_mft_block(struct folio *folio, struct writeback_control *w
 	struct inode *vi = mapping->host;
 	struct ntfs_inode *ni = NTFS_I(vi);
 	struct ntfs_volume *vol = ni->vol;
-	u8 *kaddr;
-	struct ntfs_inode **locked_nis __free(kfree) = kmalloc_array(PAGE_SIZE / NTFS_BLOCK_SIZE,
-							sizeof(struct ntfs_inode *), GFP_NOFS);
-	int nr_locked_nis = 0, err = 0, mft_ofs, prev_mft_ofs;
-	struct inode **ref_inos __free(kfree) = kmalloc_array(PAGE_SIZE / NTFS_BLOCK_SIZE,
-							      sizeof(struct inode *), GFP_NOFS);
-	int nr_ref_inos = 0;
-	struct bio *bio = NULL;
-	u64 mft_no;
-	struct ntfs_inode *tni;
-	s64 lcn;
-	s64 vcn = ntfs_pidx_to_cluster(vol, folio->index);
-	s64 end_vcn;
-	unsigned int folio_sz;
-	struct runlist_element *rl = NULL;
-	loff_t i_size = i_size_read(vi);
+	struct ntfs_inode **locked_nis __free(kfree) =
+		kmalloc_array(PAGE_SIZE / NTFS_BLOCK_SIZE,
+			      sizeof(struct ntfs_inode *), GFP_NOFS);
+	struct inode **ref_inos __free(kfree) = kmalloc_array(
+		PAGE_SIZE / NTFS_BLOCK_SIZE, sizeof(struct inode *), GFP_NOFS);
+	struct ntfs_mft_io_unit *units __free(kfree) = NULL;
+	struct bio *parent = NULL, *child = NULL;
+	struct ntfs_mft_write_ctx *ctx = NULL;
+	u8 *kaddr = NULL;
+	DECLARE_BITMAP(record_writable, PAGE_SIZE / NTFS_BLOCK_SIZE) = {};
+	u64 folio_byte, file_limit, folio_end, mirror_size;
+	unsigned int nr_records, nr_units = 0, max_units;
+	unsigned int nr_locked_nis = 0, nr_ref_inos = 0;
+	unsigned int record, unit_idx;
+	unsigned long flags;
+	loff_t i_size;
+	s64 allocated_size;
+	bool native_4k = ntfs_is_4k_native(vol);
+	bool defer = false, redirty = false;
+	int err = 0;
+
+	read_lock_irqsave(&ni->size_lock, flags);
+	i_size = i_size_read(vi);
+	allocated_size = ni->allocated_size;
+	read_unlock_irqrestore(&ni->size_lock, flags);
 
 	ntfs_debug("Entering for inode 0x%llx, folio index 0x%lx.", ni->mft_no,
 		   folio->index);
@@ -3660,77 +3711,55 @@ static int ntfs_write_mft_block(struct folio *folio, struct writeback_control *w
 	file_limit = min_t(u64, i_size, allocated_size);
 	nr_records = PAGE_SIZE / vol->mft_record_size;
 	max_units = PAGE_SIZE / min(vol->cluster_size, vol->mft_record_size);
-	state = kmalloc(
-		(size_t)nr_records * (sizeof(*locked_nis) + sizeof(*ref_inos)) +
-			(size_t)max_units * sizeof(*units) +
-			__alignof__(*units) - 1,
-		GFP_NOFS);
-	if (!state) {
+	units = kmalloc_array(max_units, sizeof(*units), GFP_NOFS);
+	if (!locked_nis || !ref_inos || !units) {
 		err = -ENOMEM;
 		goto out_noio;
 	}
-	state_pos = state;
-	locked_nis = (struct ntfs_inode **)state_pos;
-	state_pos += nr_records * sizeof(*locked_nis);
-	ref_inos = (struct inode **)state_pos;
-	state_pos += nr_records * sizeof(*ref_inos);
-	state_pos = PTR_ALIGN(state_pos, __alignof__(*units));
-	units = (struct ntfs_mft_io_unit *)state_pos;
 
 	kaddr = kmap_local_folio(folio, 0);
 	folio_clear_uptodate(folio);
 
-	for (mft_ofs = 0; mft_ofs < PAGE_SIZE && vcn < end_vcn;
-	     mft_ofs += vol->mft_record_size) {
-		/* Get the mft record number. */
-		mft_no = (((s64)folio->index << PAGE_SHIFT) + mft_ofs) >>
-			vol->mft_record_size_bits;
-		vcn = ntfs_mft_no_to_cluster(vol, mft_no);
-		/* Check whether to write this mft record. */
-		tni = NULL;
-		if (ntfs_may_write_mft_record(vol, mft_no,
-					(struct mft_record *)(kaddr + mft_ofs),
-					&tni, &ref_inos[nr_ref_inos])) {
-			unsigned int mft_record_off = 0;
-			s64 vcn_off = vcn;
+	for (record = 0; record < nr_records; record++) {
+		struct ntfs_inode *tni = NULL;
+		struct inode *ref_vi = NULL;
+		u64 record_byte =
+			folio_byte + (u64)record * vol->mft_record_size;
+		u64 mft_no;
 
-			/*
-			 * The record should be written.  If a locked ntfs
-			 * inode was returned, add it to the array of locked
-			 * ntfs inodes.
-			 */
-			if (tni)
-				locked_nis[nr_locked_nis++] = tni;
-			else if (ref_inos[nr_ref_inos])
-				nr_ref_inos++;
-
-			if (bio && (mft_ofs != prev_mft_ofs + vol->mft_record_size)) {
-flush_bio:
-				bio->bi_end_io = ntfs_bio_end_io;
-				submit_bio(bio);
-				bio = NULL;
+		if (record_byte >= file_limit)
+			continue;
+		mft_no = record_byte >> vol->mft_record_size_bits;
+		if (!ntfs_may_write_mft_record(
+			    vol, mft_no,
+			    (struct mft_record *)(kaddr +
+						  record * vol->mft_record_size),
+			    &tni, &ref_vi)) {
+			if (ref_vi)
+				ref_inos[nr_ref_inos++] = ref_vi;
+			defer = true;
+			continue;
+		}
+		if (ref_vi)
+			ref_inos[nr_ref_inos++] = ref_vi;
+		if (tni) {
+			locked_nis[nr_locked_nis++] = tni;
+			if (tni->nr_extents < 0 &&
+			    tni->ext.base_ntfs_ino == NTFS_I(vol->mft_ino)) {
+				defer = true;
+				continue;
 			}
 		}
 		__set_bit(record, record_writable);
 	}
 
-			if (vol->cluster_size < folio_size(folio)) {
-				down_write(&ni->runlist.lock);
-				rl = ntfs_attr_vcn_to_rl(ni, vcn_off, &lcn);
-				up_write(&ni->runlist.lock);
-				if (IS_ERR(rl) || lcn < 0) {
-					err = -EIO;
-					goto unm_done;
-				}
-
-				if (bio &&
-				   (bio_end_sector(bio) >> (vol->cluster_size_bits - 9)) !=
-				    lcn) {
-					bio->bi_end_io = ntfs_bio_end_io;
-					submit_bio(bio);
-					bio = NULL;
-				}
-			}
+	err = ntfs_prepare_mft_folio_units(ni, folio_byte, file_limit,
+					   native_4k, record_writable, units,
+					   &nr_units, max_units, &defer);
+	if (err)
+		goto out_noio;
+	if (!nr_units)
+		goto out_noio;
 
 	parent = ntfs_alloc_mft_parent_bio(vol, folio, NULL);
 	if (!parent) {
@@ -3739,37 +3768,17 @@ flush_bio:
 	}
 	ctx = container_of(parent, struct ntfs_mft_write_ctx, bio);
 
-				off = ((mft_no << vol->mft_record_size_bits) +
-				       mft_record_off) & vol->cluster_size_mask;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0)
-				bio = bio_alloc(vol->sb->s_bdev, 1, REQ_OP_WRITE,
-						GFP_NOIO);
-#else
-				bio = bio_alloc(GFP_NOIO, 1);
-				if (!bio)
-					return -ENOMEM;
-				bio_set_dev(bio, vol->sb->s_bdev);
-				bio->bi_opf = REQ_OP_WRITE;
-#endif
-				bio->bi_iter.bi_sector =
-					ntfs_bytes_to_bio_sector(
-						ntfs_cluster_to_bytes(vol, lcn) + off);
-			}
+	if (!ntfs_add_mft_io_unit(parent, folio, &units[0])) {
+		err = -EIO;
+		goto out_noio;
+	}
 
-			if (vol->cluster_size == NTFS_BLOCK_SIZE &&
-			    (mft_record_off ||
-			     (rl && rl->length - (vcn_off - rl->vcn) == 1) ||
-			     mft_ofs + NTFS_BLOCK_SIZE >= PAGE_SIZE))
-				folio_sz = NTFS_BLOCK_SIZE;
-			else
-				folio_sz = vol->mft_record_size;
-			if (!bio_add_folio(bio, folio, folio_sz,
-					   mft_ofs + mft_record_off)) {
-				err = -EIO;
-				bio_put(bio);
-				goto unm_done;
-			}
-			mft_record_off += folio_sz;
+	for (unit_idx = 0; unit_idx < nr_units; unit_idx++) {
+		struct ntfs_mft_io_unit *unit = &units[unit_idx];
+		u64 file_ofs = folio_byte + unit->folio_ofs;
+
+		if (unit_idx) {
+			struct bio *target = child ? child : parent;
 
 			if (!ntfs_add_mft_io_unit(target, folio, unit)) {
 				if (child) {
@@ -3818,7 +3827,6 @@ flush_bio:
 	folio_unlock(folio);
 	ntfs_release_mft_write_refs(locked_nis, nr_locked_nis, ref_inos,
 				    nr_ref_inos);
-	kfree(state);
 
 	submit_bio(parent);
 	return 0;
@@ -3837,11 +3845,12 @@ out_noio:
 	folio_unlock(folio);
 	ntfs_release_mft_write_refs(locked_nis, nr_locked_nis, ref_inos,
 				    nr_ref_inos);
-	kfree(state);
 	if (err == -ENOMEM || (defer && !err))
 		return 0;
 	return err;
 }
+
+#undef NTFS_MFT_WB_ARGS
 #else
 static int ntfs_write_mft_block(struct page *page, struct writeback_control *wbc,
 		void *data)
