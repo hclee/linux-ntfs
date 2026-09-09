@@ -28,38 +28,8 @@ jobs:
         sudo lsb_release -a
         sudo uname -r
         sudo apt-get update
-        sudo apt-get install -y libelf-dev wget tar gzip python3 util-linux
+        sudo apt-get install -y libelf-dev python3 util-linux
         sudo apt-get remove -y libntfs-3g89 ntfs-3g || true
-    # Native 4Kn is initially compiled only against the newest 6.17 kernel.
-    # Older kernel build coverage is intentionally deferred until the 6.17 path is stable.
-    - name: build port with newest 6.17.13 kernel
-      run: |
-        set -o pipefail
-        exec > >(tee "$GITHUB_WORKSPACE/kernel-6.17.13-build.log") 2>&1
-        wget --no-check-certificate https://mirrors.edge.kernel.org/pub/linux/kernel/v6.x/linux-6.17.13.tar.gz
-        tar xf linux-6.17.13.tar.gz
-        rm linux-6.17.13.tar.gz
-        mkdir linux-6.17.13/fs/ntfs/
-        mv linux-6.17.13 ../
-        cp -ar * ../linux-6.17.13/fs/ntfs/
-        cd ../linux-6.17.13/
-        # oldconfig exits before yes can finish; keep the expected SIGPIPE
-        # from making the pipefail-enabled logging step fail.
-        set +o pipefail
-        yes "" | make oldconfig > /dev/null
-        set -o pipefail
-        sed -i '/source "fs\/fat\/Kconfig"/a source "fs\/ntfs\/Kconfig"' fs/Kconfig
-        sed -i '/obj-\$(CONFIG_EXFAT_FS).*+= exfat\//i obj-$(CONFIG_NTFS_FS)       += ntfs/' fs/Makefile
-        echo 'CONFIG_NTFS_FS=m' >> .config
-        echo 'CONFIG_GENDWARFKSYMS=n' >> .config
-        # Linux 6.17 cannot finalize an in-tree single-module target when
-        # vmlinux.o is unavailable. Build the port as an external module
-        # against the prepared 6.17 tree instead.
-        make -j$((`nproc`+1)) modules_prepare
-        make -j$((`nproc`+1)) KBUILD_MODPOST_WARN=1 M=fs/ntfs modules
-        cp fs/ntfs/ntfs.ko "$GITHUB_WORKSPACE/ntfs-6.17.13.ko"
-        cd "$GITHUB_WORKSPACE"
-        rm -rf ../linux-6.17.13/
     - name: Prerequisite for xfstests testing
       run: |
         sudo apt-get install -y linux-headers-$(uname -r)
@@ -129,8 +99,6 @@ jobs:
         path: |
           ntfs-4kn-results/
           exfat-testsuites/xfstests-exfat/results/
-          kernel-6.17.13-build.log
-          ntfs-6.17.13.ko
           host-module-build.log
           host-module-install.log
           ntfsprogs-*.log
