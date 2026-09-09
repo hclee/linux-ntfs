@@ -1,6 +1,9 @@
 name: NTFS runner-host native 4Kn
 
 on:
+  push:
+    branches:
+      - port/4kn-c4k-m1k-1to1-ci
   workflow_dispatch:
     inputs:
       test_case:
@@ -19,6 +22,7 @@ env:
 
 jobs:
   runner-host:
+    if: github.event_name == 'workflow_dispatch'
     name: "Ubuntu 24.04 runner host native 4Kn"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
