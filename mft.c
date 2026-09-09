@@ -703,6 +703,7 @@ struct ntfs_mft_write_ctx {
 	struct ntfs_volume *vol;
 	struct completion *done;
 	int error;
+	bool folio_ref_held;
 	bool writeback_started;
 	struct bio bio;
 };
@@ -732,14 +733,17 @@ static void ntfs_mft_end_io(struct bio *bio)
 	else
 		err = ctx->error;
 	if (err) {
-		mapping_set_error(ctx->mapping, err);
+		if (ctx->mapping)
+			mapping_set_error(ctx->mapping, err);
 		NVolSetErrors(ctx->vol);
 		ntfs_error(ctx->vol->sb, "I/O error while writing MFT: %d",
 			   err);
 	}
 
-	folio_end_writeback(ctx->folio);
-	folio_put(ctx->folio);
+	if (ctx->writeback_started)
+		folio_end_writeback(ctx->folio);
+	if (ctx->folio_ref_held)
+		folio_put(ctx->folio);
 	if (ctx->done)
 		complete(ctx->done);
 	else
@@ -753,6 +757,7 @@ static void ntfs_start_mft_writeback(struct ntfs_mft_write_ctx *ctx)
 
 	folio_get(ctx->folio);
 	folio_start_writeback(ctx->folio);
+	ctx->folio_ref_held = true;
 	ctx->writeback_started = true;
 }
 
@@ -774,6 +779,7 @@ static struct bio *ntfs_alloc_mft_parent_bio(struct ntfs_volume *vol,
 	ctx->vol = vol;
 	ctx->done = done;
 	ctx->error = 0;
+	ctx->folio_ref_held = false;
 	ctx->writeback_started = false;
 	parent->bi_end_io = ntfs_mft_end_io;
 	return parent;
@@ -1022,7 +1028,8 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 
 	kunmap_local(kaddr);
 
-	ntfs_start_mft_writeback(ctx);
+	folio_get(folio);
+	ctx->folio_ref_held = true;
 	if (child) {
 		bio_chain(child, parent);
 		submit_bio(child);
