@@ -341,7 +341,5 @@ jobs:
           path: |
             ci-results/*.log
             ci-results/*.txt
-            ci-results/bzImage
             ci-results/kernel.config
-            ci-results/ntfs.ko
             ci-results/xfstests/**
