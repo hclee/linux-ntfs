@@ -1,0 +1,142 @@
+name: NTFS runner-host native 4Kn
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_case:
+        description: "xfstests case; blank selects the full profile"
+        required: false
+        default: "generic/013"
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  NTFS_PROGS_REPOSITORY: hclee/ntfsprogs-plus
+  NTFS_PROGS_REF: topic/mkfs-mft-record-size-clean
+  NTFS_PROGS_SHA: 1c7d03669425f668e90f9c58a56e66ba34f9e131
+
+jobs:
+  runner-host:
+    name: "Ubuntu 24.04 runner host native 4Kn"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out linux-ntfs
+        uses: actions/checkout@v4
+
+      - name: Install runner-kernel build and test dependencies
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            autoconf automake bc build-essential kmod \
+            libacl1-dev libaio-dev libattr1-dev libcap-dev libelf-dev \
+            libfuse-dev libgcrypt20-dev libncurses-dev libssl-dev \
+            libtool libtool-bin pkg-config python3 gawk attr acl \
+            fio xfsprogs xfslibs-dev uuid-dev \
+            git tar xz-utils
+          if [ ! -e "/lib/modules/$(uname -r)/build/Makefile" ]; then
+            sudo apt-get install --no-install-recommends -y \
+              "linux-headers-$(uname -r)"
+          fi
+          test -e "/lib/modules/$(uname -r)/build/Makefile"
+
+      - name: Prepare requested test selection
+        env:
+          REQUESTED_CASE: ${{ inputs.test_case }}
+        run: |
+          set -eux
+          mkdir -p ci-results/xfstests
+          if [ -n "$REQUESTED_CASE" ]; then
+            grep -Fx "$REQUESTED_CASE" .github/xfstests/ntfs-geometry-full.list
+            printf '%s\n' "$REQUESTED_CASE" > ci-results/tests.list
+          else
+            cp .github/xfstests/ntfs-geometry-full.list ci-results/tests.list
+          fi
+          {
+            printf 'test_case=%s\n' "$REQUESTED_CASE"
+            printf 'runner_kernel=%s\n' "$(uname -r)"
+            printf 'ubuntu=%s\n' "$(lsb_release -ds)"
+          } > ci-results/request.txt
+
+      - name: Check out pinned ntfsprogs-plus
+        run: |
+          set -eux
+          git clone --filter=blob:none --single-branch \
+            --branch "$NTFS_PROGS_REF" \
+            "https://github.com/${NTFS_PROGS_REPOSITORY}.git" ntfsprogs-plus
+          git -C ntfsprogs-plus checkout --detach "$NTFS_PROGS_SHA"
+          git -C ntfsprogs-plus rev-parse HEAD | tee ci-results/ntfsprogs-plus.sha
+
+      - name: Build and verify mkntfs
+        run: |
+          set -euxo pipefail
+          cd ntfsprogs-plus
+          ./autogen.sh
+          ./configure
+          make -j"$(nproc)"
+          cd "$GITHUB_WORKSPACE"
+          MKNTFS="$GITHUB_WORKSPACE/ntfsprogs-plus/src/.libs/mkntfs"
+          test -x "$MKNTFS"
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/ntfsprogs-plus/libntfs/.libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          "$MKNTFS" --help | tee ci-results/mkntfs-help.txt
+          grep -F -- '--mft-record-size' ci-results/mkntfs-help.txt
+          printf 'mkntfs=%s\n' "$MKNTFS" >> ci-results/request.txt
+
+      - name: Build NTFS module for runner kernel
+        run: |
+          set -euxo pipefail
+          export RUNNER_KERNEL="$(uname -r)"
+          make KDIR="/lib/modules/$RUNNER_KERNEL/build" -j"$(nproc)"
+          cp ntfs.ko ci-results/ntfs.ko
+          modinfo ntfs.ko | tee ci-results/ntfs-modinfo.txt
+
+      - name: Build xfstests
+        run: |
+          set -euxo pipefail
+          git clone --depth=1 https://github.com/namjaejeon/exfat-testsuites
+          tar -xzf exfat-testsuites/xfstests-exfat.tgz
+          cd xfstests-exfat
+          make -j"$(nproc)"
+          cd "$GITHUB_WORKSPACE"
+          rm -rf xfstests-exfat/.git
+
+      - name: Run NTFS xfstests on runner host
+        env:
+          NTFS_PROGS: ${{ github.workspace }}/ntfsprogs-plus
+          XFSTESTS: ${{ github.workspace }}/xfstests-exfat
+        run: |
+          set -euxo pipefail
+          export TEST_CASE="${{ inputs.test_case }}"
+          export RUNNER_KERNEL="$(uname -r)"
+          export MKNTFS="$GITHUB_WORKSPACE/ntfsprogs-plus/src/.libs/mkntfs"
+          export PATH="$GITHUB_WORKSPACE/ntfsprogs-plus/src/.libs:$PATH"
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/ntfsprogs-plus/libntfs/.libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          ln -sf "$MKNTFS" "$GITHUB_WORKSPACE/ci-results/mkfs.ntfs"
+          ln -sf "$GITHUB_WORKSPACE/ntfsprogs-plus/src/.libs/ntfsresize" \
+            "$GITHUB_WORKSPACE/ci-results/ntfsresize"
+          export PATH="$GITHUB_WORKSPACE/ci-results:$PATH"
+          sudo -E env \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            TEST_CASE="$TEST_CASE" \
+            RUNNER_KERNEL="$RUNNER_KERNEL" \
+            MKNTFS="$MKNTFS" \
+            NTFS_PROGS="$NTFS_PROGS" \
+            XFSTESTS="$XFSTESTS" \
+            PATH="$PATH" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            .github/scripts/ntfs-runner-host-xfstests.sh
+
+      - name: Upload runner-host results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ntfs-runner-host-4kn
+          path: |
+            ci-results/*.log
+            ci-results/*.txt
+            ci-results/status
+            ci-results/xfstests/**
