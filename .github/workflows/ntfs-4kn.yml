@@ -287,7 +287,8 @@ jobs:
             -m 2048M \
             -no-reboot \
             -nographic \
-            -serial stdio \
+            -serial file:ci-results/qemu-xfstests-console.log \
+            -monitor none \
             -kernel ci-results/bzImage \
             -initrd ci-results/ntfs-4kn-initramfs.cpio.gz \
             -append "console=ttyS0 rdinit=/sbin/ntfs-4kn-xfstests-init panic=-1" \
@@ -297,9 +298,11 @@ jobs:
             -device virtio-blk-pci,drive=scratch,logical_block_size=4096,physical_block_size=4096 \
             -drive file=ci-results/ntfs-4kn-results.img,if=none,format=raw,id=results \
             -device virtio-blk-pci,drive=results \
-            > ci-results/qemu-xfstests-console.log 2>&1
+            > ci-results/qemu-xfstests-qemu.log 2>&1
           qemu_rc=$?
           set -e
+          cat ci-results/qemu-xfstests-qemu.log \
+            >> ci-results/qemu-xfstests-console.log
           printf 'qemu_exit=%s\n' "$qemu_rc" | tee ci-results/qemu-xfstests-exit.txt
           mkdir -p ci-results/xfstests ci-results/results-mount
           collect_rc=0
