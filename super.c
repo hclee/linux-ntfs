@@ -640,6 +640,31 @@ static char *read_ntfs_boot_sector(struct super_block *sb,
 	return boot_sector;
 }
 
+static bool ntfs_validate_4kn_geometry(const struct ntfs_volume *vol)
+{
+	struct super_block *sb = vol->sb;
+	unsigned int logical_block_size = bdev_logical_block_size(sb->s_bdev);
+
+	if (logical_block_size != NTFS_4KN_BLOCK_SIZE)
+		return true;
+
+	if (sb->s_blocksize != NTFS_4KN_BLOCK_SIZE ||
+	    vol->sector_size != NTFS_4KN_BLOCK_SIZE || !vol->mft_record_size ||
+	    vol->mft_record_size > NTFS_4KN_BLOCK_SIZE ||
+	    NTFS_4KN_BLOCK_SIZE % vol->mft_record_size ||
+	    vol->cluster_size < NTFS_4KN_BLOCK_SIZE ||
+	    vol->cluster_size % NTFS_4KN_BLOCK_SIZE) {
+		ntfs_error(
+			sb,
+			"Unsupported 4Kn geometry (logical %u, block %lu, sector %u, cluster %u, MFT record %u).",
+			logical_block_size, sb->s_blocksize,
+			(unsigned int)vol->sector_size, vol->cluster_size,
+			vol->mft_record_size);
+		return false;
+	}
+	return true;
+}
+
 /*
  * parse_ntfs_boot_sector - parse the boot sector and store the data in @vol
  * @vol:	volume structure to initialise with data from boot sector
@@ -727,6 +752,9 @@ static bool parse_ntfs_boot_sector(struct ntfs_volume *vol,
 		ntfs_warning(vol->sb, "Mft record size (%i) is smaller than the sector size (%i).",
 				vol->mft_record_size, vol->sector_size);
 	}
+	if (!ntfs_validate_4kn_geometry(vol))
+		return false;
+
 	clusters_per_index_record = b->clusters_per_index_record;
 	ntfs_debug("clusters_per_index_record = %i (0x%x)",
 			clusters_per_index_record, clusters_per_index_record);
