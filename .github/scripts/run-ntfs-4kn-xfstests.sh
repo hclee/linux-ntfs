@@ -213,7 +213,7 @@ while IFS= read -r test_case; do
 		log="$RESULTS_DIR/${safe_case}.attempt-${iteration}.log"
 		printf 'Running %s (iteration %s/%s)\n' "$test_case" "$iteration" \
 			"$TEST_REPEATS"
-		rm -f "$XFSTESTS_DIR/results/generic/$result_name."{full,out.bad,dmesg,notrun}
+		sudo rm -f "$XFSTESTS_DIR/results/generic/$result_name."{full,out.bad,dmesg,notrun}
 		set +e
 		(
 			cd "$XFSTESTS_DIR"
