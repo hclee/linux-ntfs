@@ -1,0 +1,136 @@
+#!/bin/bash
+
+set -u
+
+RESULT_MNT=/results
+XFSTESTS=/opt/xfstests-exfat
+MKNTFS=/opt/ntfsprogs/src/.libs/mkntfs
+KERNEL_VERSION=6.18.22
+
+mkdir -p /dev /proc /sys "$RESULT_MNT" /mnt/test /mnt/scratch
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+
+result_dev=
+native_devs=()
+for _ in $(seq 1 60); do
+	native_devs=()
+	result_dev=
+	for sysdev in /sys/class/block/vd*; do
+		[ -e "$sysdev" ] || continue
+		name=${sysdev##*/}
+		dev=/dev/$name
+		logical=$(cat "$sysdev/queue/logical_block_size")
+		physical=$(cat "$sysdev/queue/physical_block_size")
+		echo "device=$dev logical=$logical physical=$physical"
+		if [ "$logical" = 4096 ] && [ "$physical" = 4096 ]; then
+			native_devs+=("$dev")
+		fi
+		if [ "$(blkid -s LABEL -o value "$dev" 2>/dev/null || true)" = NTFS_RESULTS ]; then
+			result_dev=$dev
+		fi
+	done
+	if [ "${#native_devs[@]}" -eq 2 ] && [ -n "$result_dev" ]; then
+		break
+	fi
+	sleep 1
+done
+
+if [ "${#native_devs[@]}" -ne 2 ] || [ -z "$result_dev" ]; then
+	echo "NTFS_XFSTESTS_FAIL: expected two 4096/4096 devices and NTFS_RESULTS"
+	poweroff -f
+	exit 1
+fi
+
+TEST_DEV=${native_devs[0]}
+SCRATCH_DEV=${native_devs[1]}
+if ! mount -t ext4 "$result_dev" "$RESULT_MNT"; then
+	echo "NTFS_XFSTESTS_FAIL: result device could not be mounted"
+	poweroff -f
+	exit 1
+fi
+exec > >(tee "$RESULT_MNT/guest-console.log") 2>&1
+
+echo "NTFS_XFSTESTS_INIT"
+
+if ! insmod "/lib/modules/$KERNEL_VERSION/extra/ntfs.ko"; then
+	echo "NTFS_XFSTESTS_FAIL: ntfs module could not be loaded"
+	echo NTFS_XFSTESTS_FAIL > "$RESULT_MNT/status"
+	sync
+	poweroff -f
+	exit 1
+fi
+
+for dev in "$TEST_DEV" "$SCRATCH_DEV"; do
+	"$MKNTFS" -F -Q -s 4096 -c 4096 -r 1024 "$dev" \
+		> "$RESULT_MNT/mkntfs-$(basename "$dev").log" 2>&1 || {
+		echo "NTFS_XFSTESTS_FAIL: mkntfs failed for $dev"
+		echo NTFS_XFSTESTS_FAIL > "$RESULT_MNT/status"
+		sync
+		poweroff -f
+		exit 1
+	}
+done
+
+python3 - "$TEST_DEV" "$RESULT_MNT/boot-geometry.txt" <<'PY'
+import struct
+import sys
+
+device, output = sys.argv[1:]
+with open(device, "rb", buffering=0) as stream:
+    boot = stream.read(4096)
+sector = struct.unpack_from("<H", boot, 11)[0]
+cluster = sector * boot[13]
+encoding = struct.unpack_from("<b", boot, 64)[0]
+record = 1 << -encoding if encoding < 0 else cluster * encoding
+with open(output, "w", encoding="ascii") as stream:
+    stream.write(f"bytes_per_sector={sector}\n")
+    stream.write(f"cluster_size={cluster}\n")
+    stream.write(f"mft_record_size={record}\n")
+if (sector, cluster, record) != (4096, 4096, 1024):
+    raise SystemExit("unexpected NTFS geometry")
+PY
+
+rm -rf "$XFSTESTS/results"
+cat > "$XFSTESTS/local.config" <<EOF
+export TEST_DEV=$TEST_DEV
+export TEST_DIR=/mnt/test
+export SCRATCH_DEV=$SCRATCH_DEV
+export SCRATCH_MNT=/mnt/scratch
+export FSTYP=ntfs
+export MKFS_OPTIONS="-F -Q -s 4096 -c 4096 -r 1024"
+export MOUNT_OPTIONS="-osymlink=native,native_symlink=rel"
+export KEEP_DMESG=yes
+EOF
+
+mkdir -p "$RESULT_MNT/xfstests-results"
+dmesg > "$RESULT_MNT/guest-dmesg-before.log"
+set +e
+(
+	cd "$XFSTESTS"
+	mapfile -t tests < /etc/ntfs-4kn-tests.list
+	./check --exact-order "${tests[@]}"
+) > "$RESULT_MNT/xfstests.log" 2>&1
+test_rc=$?
+set -e
+dmesg > "$RESULT_MNT/guest-dmesg-after.log"
+if [ -d "$XFSTESTS/results" ]; then
+	cp -a "$XFSTESTS/results/." "$RESULT_MNT/xfstests-results/"
+fi
+
+{
+	printf 'test_rc=%s\n' "$test_rc"
+	if find "$RESULT_MNT/xfstests-results" -type f -name '*.out.bad' | grep -q .; then
+		echo NTFS_XFSTESTS_FAIL
+		echo 'failed_cases:'
+		find "$RESULT_MNT/xfstests-results" -type f -name '*.out.bad' \
+			-printf '%f\n' | sed 's/\.out\.bad$//' | sort -u
+	else
+		echo NTFS_XFSTESTS_PASS
+	fi
+} | tee "$RESULT_MNT/status"
+
+sync
+poweroff -f
+sleep 30

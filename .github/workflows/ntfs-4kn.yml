@@ -41,8 +41,11 @@ jobs:
           sudo apt-get install --no-install-recommends -y \
             autoconf automake bc bison build-essential busybox-static \
             cpio curl flex gzip libelf-dev libfuse-dev libgcrypt20-dev \
-            libncurses-dev libssl-dev libtool libtool-bin pkg-config \
-            qemu-system-x86 qemu-utils tar xz-utils uuid-dev
+            libacl1-dev libaio-dev libattr1-dev libcap-dev libncurses-dev \
+            libssl-dev libtool libtool-bin pkg-config python3 gawk attr acl \
+            fio xfsprogs libgdbm-dev \
+            qemu-system-x86 qemu-utils rsync tar xz-utils uuid-dev \
+            debootstrap
 
       - name: Prepare requested test selection
         env:
@@ -142,12 +145,70 @@ jobs:
           scripts/config --enable CONFIG_VIRTIO
           scripts/config --enable CONFIG_VIRTIO_BLK
           scripts/config --enable CONFIG_VIRTIO_PCI
+          scripts/config --enable CONFIG_EXT4_FS
+          scripts/config --enable CONFIG_FS_POSIX_ACL
+          scripts/config --enable CONFIG_FS_XATTR
+          scripts/config --enable CONFIG_BLK_DEV_LOOP
+          scripts/config --enable CONFIG_OVERLAY_FS
           scripts/config --module CONFIG_NTFS_FS
           make olddefconfig
           make -j"$(nproc)" bzImage fs/ntfs/ntfs.ko \
             2>&1 | tee "$GITHUB_WORKSPACE/ci-results/kernel-build.log"
           cp .config "$GITHUB_WORKSPACE/ci-results/kernel.config"
           cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/ci-results/bzImage"
+
+      - name: Build xfstests and guest userspace
+        run: |
+          set -euxo pipefail
+          git clone --depth=1 https://github.com/namjaejeon/exfat-testsuites
+          tar -xzf exfat-testsuites/xfstests-exfat.tgz
+          cd xfstests-exfat
+          make -j"$(nproc)"
+          cd "$GITHUB_WORKSPACE"
+          rm -rf xfstests-exfat/.git
+
+      - name: Create NTFS xfstests initramfs
+        run: |
+          set -euxo pipefail
+          rm -rf guest-root ci-results/ntfs-4kn-initramfs.cpio.gz
+          sudo debootstrap --variant=minbase \
+            --include=bash,bc,coreutils,cpio,diffutils,e2fsprogs,findutils,gawk,\
+            grep,kmod,libaio1,libcap2-bin,perl,procps,psmisc,python3,sed,tar,util-linux,\
+            acl,attr,fio,xfsprogs,xz-utils \
+            noble guest-root http://archive.ubuntu.com/ubuntu
+          sudo mkdir -p \
+            guest-root/lib/modules/$KERNEL_VERSION/extra \
+            guest-root/opt/ntfsprogs/src/.libs \
+            guest-root/opt/ntfsprogs/libntfs/.libs
+          sudo install -m 0644 ci-results/kernel-build.log guest-root/etc/ntfs-kernel-build.log
+          sudo install -m 0644 \
+            "linux-$KERNEL_VERSION/fs/ntfs/ntfs.ko" \
+            "guest-root/lib/modules/$KERNEL_VERSION/extra/ntfs.ko"
+          sudo cp -a ntfsprogs-plus/src/.libs/. guest-root/opt/ntfsprogs/src/.libs/
+          sudo cp -a ntfsprogs-plus/libntfs/.libs/. guest-root/opt/ntfsprogs/libntfs/.libs/
+          sudo cp -a xfstests-exfat guest-root/opt/
+          sudo install -m 0644 ci-results/tests.list guest-root/etc/ntfs-4kn-tests.list
+          sudo install -m 0755 \
+            .github/scripts/ntfs-4kn-xfstests-init \
+            guest-root/sbin/ntfs-4kn-xfstests-init
+          sudo ln -sf /opt/ntfsprogs/src/.libs/mkntfs guest-root/sbin/mkfs.ntfs
+          sudo ln -sf /opt/ntfsprogs/src/.libs/ntfsck guest-root/sbin/ntfsck
+          {
+            find ntfsprogs-plus/src/.libs xfstests-exfat/src \
+              -type f -perm /111 -print0 \
+              | while IFS= read -r -d '' binary; do
+                  ldd "$binary" 2>/dev/null || true
+                done
+          } | awk '/=> \// { print $3 } /^\// { print $1 }' \
+            | grep '^/' | sort -u \
+            | while IFS= read -r library; do
+                sudo cp --parents "$library" guest-root
+              done
+          sudo sh -c \
+            'cd guest-root && find . -print0 | cpio --null -o -H newc' \
+            | gzip -9 > ci-results/ntfs-4kn-initramfs.cpio.gz
+          truncate -s 512M ci-results/ntfs-4kn-results.img
+          mkfs.ext4 -q -F -L NTFS_RESULTS ci-results/ntfs-4kn-results.img
 
       - name: Build geometry probe initramfs
         run: |
@@ -195,6 +256,63 @@ jobs:
           set -e
           grep -F 'NTFS_4KN_GEOMETRY_PASS' ci-results/qemu-console.log
           printf 'qemu_exit=%s\n' "$qemu_rc" >> ci-results/qemu-console.log
+
+      - name: Run NTFS xfstests in 6.18.22 QEMU
+        run: |
+          set -euxo pipefail
+          truncate -s 16G ci-results/xfstests-test.img
+          truncate -s 16G ci-results/xfstests-scratch.img
+          set +e
+          timeout --signal=TERM --kill-after=30s 5400s \
+            qemu-system-x86_64 \
+            -machine q35 \
+            -cpu max \
+            -smp 2 \
+            -m 2048M \
+            -no-reboot \
+            -nographic \
+            -serial stdio \
+            -kernel ci-results/bzImage \
+            -initrd ci-results/ntfs-4kn-initramfs.cpio.gz \
+            -append "console=ttyS0 rdinit=/sbin/ntfs-4kn-xfstests-init panic=-1" \
+            -drive file=ci-results/xfstests-test.img,if=none,format=raw,id=test \
+            -device virtio-blk-pci,drive=test,logical_block_size=4096,physical_block_size=4096 \
+            -drive file=ci-results/xfstests-scratch.img,if=none,format=raw,id=scratch \
+            -device virtio-blk-pci,drive=scratch,logical_block_size=4096,physical_block_size=4096 \
+            -drive file=ci-results/ntfs-4kn-results.img,if=none,format=raw,id=results \
+            -device virtio-blk-pci,drive=results \
+            > ci-results/qemu-xfstests-console.log 2>&1
+          qemu_rc=$?
+          set -e
+          printf 'qemu_exit=%s\n' "$qemu_rc" | tee ci-results/qemu-xfstests-exit.txt
+          mkdir -p ci-results/xfstests ci-results/results-mount
+          collect_rc=0
+          sudo mount -o loop,ro,noload \
+            ci-results/ntfs-4kn-results.img ci-results/results-mount || collect_rc=$?
+          if [ "$collect_rc" -eq 0 ]; then
+            sudo cp -a ci-results/results-mount/. ci-results/xfstests/
+            sudo umount ci-results/results-mount
+            sudo chown -R "$USER:$USER" ci-results/xfstests
+          fi
+          if [ -f ci-results/xfstests/status ]; then
+            cat ci-results/xfstests/status
+          else
+            printf 'NTFS_XFSTESTS_FAIL: result disk was not collected\n' \
+              | tee ci-results/xfstests/status
+          fi
+          find ci-results/xfstests -type f -name '*.out.bad' -printf '%f\n' \
+            | sed 's/\.out\.bad$//' | sort -u \
+            > ci-results/xfstests-failures.txt || true
+          if grep -Eiq 'kernel panic|BUG:|Oops:|general protection fault' \
+              ci-results/qemu-xfstests-console.log; then
+            echo 'kernel_fault=yes' | tee ci-results/kernel-fault.txt
+          else
+            echo 'kernel_fault=no' | tee ci-results/kernel-fault.txt
+          fi
+          if [ "$qemu_rc" -ne 0 ] || ! grep -q '^NTFS_XFSTESTS_PASS$' \
+              ci-results/xfstests/status; then
+            exit 1
+          fi
 
       - name: Upload native 4Kn setup artifacts
         if: always()
