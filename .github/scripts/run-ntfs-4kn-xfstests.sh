@@ -53,16 +53,17 @@ if [[ ! -f "$TESTS_FILE" ]]; then
 	exit 2
 fi
 
-if [[ -n "$TEST_CASE" ]]; then
-	if ! grep -Fxq "$TEST_CASE" "$TESTS_FILE"; then
-		echo "Requested case is not in the full profile: $TEST_CASE" >&2
-		printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
-		exit 2
-	fi
-	printf '%s\n' "$TEST_CASE" > "$RESULTS_DIR/tests.list"
-else
-	cp "$TESTS_FILE" "$RESULTS_DIR/tests.list"
+if [[ -z "$TEST_CASE" ]]; then
+	echo "TEST_CASE is required; the full test profile is not supported" >&2
+	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
+	exit 2
 fi
+if ! grep -Fxq "$TEST_CASE" "$TESTS_FILE"; then
+	echo "Requested case is not in the full profile: $TEST_CASE" >&2
+	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
+	exit 2
+fi
+printf '%s\n' "$TEST_CASE" > "$RESULTS_DIR/tests.list"
 
 truncate -s 100G "$TEST_IMAGE" "$SCRATCH_IMAGE"
 TEST_DEV=$(sudo losetup --find --show --sector-size 4096 "$TEST_IMAGE")

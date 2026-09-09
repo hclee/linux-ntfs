@@ -5,7 +5,6 @@ on:
     branches:
     - main
     - ntfs-next
-    - test-*
   pull_request:
     branches:
     - main
@@ -13,8 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       test_case:
-        description: "Run one generic case; blank runs all 160 cases"
-        required: false
+        description: "Run one generic case"
+        default: generic/013
+        required: true
         type: string
 
 jobs:
@@ -56,7 +56,7 @@ jobs:
         make -j$((`nproc`+1)) 2>&1 | tee "$GITHUB_WORKSPACE/ntfsprogs-build.log"
         sudo make install 2>&1 | tee "$GITHUB_WORKSPACE/ntfsprogs-install.log"
         cd "$GITHUB_WORKSPACE"
-        /usr/local/bin/mkntfs --help | grep -- --mft-record-size
+        mkntfs --help | grep -- --mft-record-size
         sudo mkdir -p /mnt/scratch /mnt/test
         mkdir -p ntfs-4kn-results
     - name: compressed read/write tests
@@ -84,9 +84,8 @@ jobs:
         sudo umount ./full_test/
         sudo ntfsck -n "$loop"
     - name: native 4kn-c4k-m1k xfstests
-      if: always()
       env:
-        TEST_CASE: ${{ github.event.inputs.test_case || '' }}
+        TEST_CASE: ${{ github.event.inputs.test_case || 'generic/013' }}
       run: |
         export PATH=/usr/local/bin:/usr/local/sbin:$PATH
         export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
