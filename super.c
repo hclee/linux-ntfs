@@ -641,29 +641,45 @@ static char *read_ntfs_boot_sector(struct super_block *sb,
 	return boot_sector;
 }
 
-static bool ntfs_validate_4kn_geometry(const struct ntfs_volume *vol,
-				       const unsigned int logical_block_size)
+static bool ntfs_validate_mft_io_geometry(struct ntfs_volume *vol,
+					  const unsigned int logical_block_size)
 {
 	struct super_block *sb = vol->sb;
+	u32 mft_io_unit_size = 0;
 
-	if (logical_block_size != NTFS_4KN_BLOCK_SIZE)
-		return true;
+	if (!logical_block_size || logical_block_size > PAGE_SIZE ||
+	    !vol->mft_record_size || vol->mft_record_size > PAGE_SIZE ||
+	    !vol->cluster_size)
+		goto err;
 
-	if (sb->s_blocksize != NTFS_4KN_BLOCK_SIZE ||
-	    vol->sector_size != NTFS_4KN_BLOCK_SIZE || !vol->mft_record_size ||
-	    vol->mft_record_size > NTFS_4KN_BLOCK_SIZE ||
-	    NTFS_4KN_BLOCK_SIZE % vol->mft_record_size ||
-	    vol->cluster_size < NTFS_4KN_BLOCK_SIZE ||
-	    vol->cluster_size % NTFS_4KN_BLOCK_SIZE) {
-		ntfs_error(
-			sb,
-			"Unsupported 4Kn geometry (logical %u, block %lu, sector %u, cluster %u, MFT record %u).",
-			logical_block_size, sb->s_blocksize,
-			(unsigned int)vol->sector_size, vol->cluster_size,
-			vol->mft_record_size);
-		return false;
-	}
+	mft_io_unit_size = max(logical_block_size, vol->mft_record_size);
+	if (mft_io_unit_size > PAGE_SIZE ||
+	    mft_io_unit_size % logical_block_size ||
+	    mft_io_unit_size % vol->mft_record_size ||
+	    vol->mft_record_size > 2 * (u64)vol->cluster_size)
+		goto err;
+
+	/*
+	 * A containing device block is mapped through one MFT runlist
+	 * element. Keep it within a cluster so that direct MFT writes do
+	 * not cross an extent boundary.
+	 */
+	if (mft_io_unit_size > vol->mft_record_size &&
+	    (vol->cluster_size < mft_io_unit_size ||
+	     vol->cluster_size % mft_io_unit_size))
+		goto err;
+
+	vol->mft_io_unit_size = mft_io_unit_size;
 	return true;
+
+err:
+	ntfs_error(
+		sb,
+		"Unsupported MFT I/O geometry (logical %u, block %lu, sector %u, cluster %u, MFT record %u, I/O unit %u).",
+		logical_block_size, sb->s_blocksize,
+		(unsigned int)vol->sector_size, vol->cluster_size,
+		vol->mft_record_size, mft_io_unit_size);
+	return false;
 }
 
 /*
@@ -755,16 +771,8 @@ static bool parse_ntfs_boot_sector(struct ntfs_volume *vol,
 		ntfs_warning(vol->sb, "Mft record size (%i) is smaller than the sector size (%i).",
 				vol->mft_record_size, vol->sector_size);
 	}
-	if (!ntfs_validate_4kn_geometry(vol, logical_block_size))
+	if (!ntfs_validate_mft_io_geometry(vol, logical_block_size))
 		return false;
-
-	/*
-	 * Cache the unit used by MFT writes after validating the volume
-	 * geometry. Keep record-sized I/O for non-native volumes.
-	 */
-	vol->mft_io_unit_size = vol->mft_record_size;
-	if (logical_block_size == NTFS_4KN_BLOCK_SIZE)
-		vol->mft_io_unit_size = NTFS_4KN_BLOCK_SIZE;
 
 	clusters_per_index_record = b->clusters_per_index_record;
 	ntfs_debug("clusters_per_index_record = %i (0x%x)",

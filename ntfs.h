@@ -54,7 +54,6 @@
  * cluster size exceeds 4096 bytes.
  */
 #define MAX_COMPRESSION_CLUSTER_SIZE 4096
-#define NTFS_4KN_BLOCK_SIZE 4096
 
 #define NTFS_B_TO_CLU(vol, b) ((b) >> (vol)->cluster_size_bits)
 #define NTFS_CLU_TO_B(vol, clu) ((u64)(clu) << (vol)->cluster_size_bits)
