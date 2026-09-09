@@ -42,6 +42,7 @@ jobs:
             autoconf automake bc bison build-essential busybox-static \
             cpio curl flex gzip libelf-dev libfuse-dev libgcrypt20-dev \
             libacl1-dev libaio-dev libattr1-dev libcap-dev libncurses-dev \
+            xfslibs-dev \
             libssl-dev libtool libtool-bin pkg-config python3 gawk attr acl \
             fio xfsprogs libgdbm-dev \
             qemu-system-x86 qemu-utils rsync tar xz-utils uuid-dev \
