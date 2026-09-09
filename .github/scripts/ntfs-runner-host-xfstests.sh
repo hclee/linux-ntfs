@@ -78,7 +78,7 @@ export SCRATCH_DEV=$SCRATCH_DEV
 export SCRATCH_MNT=$SCRATCH_MNT
 export FSTYP=ntfs
 export MKFS_OPTIONS="-F -Q -s 4096 -c 4096 -r 1024"
-export MOUNT_OPTIONS="-osymlink=native,native_symlink=rel"
+export MOUNT_OPTIONS="-i -osymlink=native,native_symlink=rel"
 export KEEP_DMESG=yes
 EOF
 
