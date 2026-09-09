@@ -127,6 +127,16 @@ jobs:
           test -s linux-6.18.22.tar.xz
           tar -tf linux-6.18.22.tar.xz >/dev/null
 
+      - name: Cache built 6.18.22 NTFS artifacts
+        id: kernel-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ci-results/bzImage
+            ci-results/kernel.config
+            ci-results/ntfs.ko
+          key: linux-${{ env.KERNEL_VERSION }}-ntfs-${{ runner.arch }}-${{ hashFiles('*.c', '*.h', 'Kconfig', 'Makefile') }}
+
       - name: Build 6.18.22 kernel and NTFS module
         run: |
           set -euxo pipefail
@@ -139,6 +149,12 @@ jobs:
             printf '\nsource "fs/ntfs/Kconfig"\n' >> fs/Kconfig
           grep -q '^obj-\$(CONFIG_NTFS_FS).*ntfs/' fs/Makefile || \
             printf '\nobj-$(CONFIG_NTFS_FS) += ntfs/\n' >> fs/Makefile
+          if [ "${{ steps.kernel-cache.outputs.cache-hit }}" = true ]; then
+            test -s "$GITHUB_WORKSPACE/ci-results/bzImage"
+            test -s "$GITHUB_WORKSPACE/ci-results/kernel.config"
+            test -s "$GITHUB_WORKSPACE/ci-results/ntfs.ko"
+            exit 0
+          fi
           make defconfig
           scripts/config --enable CONFIG_BLK_DEV_INITRD
           scripts/config --enable CONFIG_DEVTMPFS
@@ -157,6 +173,7 @@ jobs:
             2>&1 | tee "$GITHUB_WORKSPACE/ci-results/kernel-build.log"
           cp .config "$GITHUB_WORKSPACE/ci-results/kernel.config"
           cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/ci-results/bzImage"
+          cp fs/ntfs/ntfs.ko "$GITHUB_WORKSPACE/ci-results/ntfs.ko"
 
       - name: Build xfstests and guest userspace
         run: |
@@ -181,7 +198,7 @@ jobs:
             guest-root/opt/ntfsprogs/libntfs/.libs
           sudo install -m 0644 ci-results/kernel-build.log guest-root/etc/ntfs-kernel-build.log
           sudo install -m 0644 \
-            "linux-$KERNEL_VERSION/fs/ntfs/ntfs.ko" \
+            ci-results/ntfs.ko \
             "guest-root/lib/modules/$KERNEL_VERSION/extra/ntfs.ko"
           sudo cp -a ntfsprogs-plus/src/.libs/. guest-root/opt/ntfsprogs/src/.libs/
           sudo cp -a ntfsprogs-plus/libntfs/.libs/. guest-root/opt/ntfsprogs/libntfs/.libs/
