@@ -944,8 +944,8 @@ static int ntfs_prepare_mft_record_io_units(struct ntfs_inode *ni,
  * On error (specifically ENOMEM), we redirty the record so it can be retried.
  * For other errors, we mark the volume with errors.
  *
- * When the MFT I/O unit is larger than the MFT record, the containing unit is
- * always written synchronously, regardless of @sync.
+ * If @sync is false, PG_writeback keeps the folio stable and serializes later
+ * writers until the I/O completes.
  */
 int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int sync)
 {
@@ -965,8 +965,6 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
 	WARN_ON(NInoAttr(ni));
 	WARN_ON(!folio_test_locked(folio));
 
-	if (vol->mft_io_unit_size > vol->mft_record_size)
-		sync = 1;
 	if (folio_test_writeback(folio))
 		folio_wait_writeback(folio);
 
