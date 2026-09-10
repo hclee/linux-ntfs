@@ -5,17 +5,32 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 GEOMETRY=${GEOMETRY:-m1k}
 case "$GEOMETRY" in
 m1k)
+	SECTOR_SIZE=4096
+	PHYSICAL_SECTOR_SIZE=4096
+	CLUSTER_SIZE=4096
 	MFT_RECORD_SIZE=1024
+	RESULTS_BASENAME=ntfs-4kn-m1k
 	;;
 m4k)
+	SECTOR_SIZE=4096
+	PHYSICAL_SECTOR_SIZE=4096
+	CLUSTER_SIZE=4096
 	MFT_RECORD_SIZE=4096
+	RESULTS_BASENAME=ntfs-4kn-m4k
+	;;
+512e-c4k-m1k)
+	SECTOR_SIZE=512
+	PHYSICAL_SECTOR_SIZE=512
+	CLUSTER_SIZE=4096
+	MFT_RECORD_SIZE=1024
+	RESULTS_BASENAME=ntfs-512e-c4k-m1k
 	;;
 *)
-	echo "GEOMETRY must be m1k or m4k" >&2
+	echo "GEOMETRY must be m1k, m4k, or 512e-c4k-m1k" >&2
 	exit 2
 	;;
 esac
-RESULTS_DIR=${RESULTS_DIR:-"$ROOT_DIR/ntfs-4kn-$GEOMETRY-results"}
+RESULTS_DIR=${RESULTS_DIR:-"$ROOT_DIR/$RESULTS_BASENAME-results"}
 TEST_CASE=${TEST_CASE:-}
 TEST_CASES=${TEST_CASES:-${TEST_CASE:-}}
 TESTS_FILE=${TESTS_FILE:-"$ROOT_DIR/.github/xfstests/ntfs-geometry-full.list"}
@@ -23,10 +38,10 @@ TEST_TIMEOUTS_FILE=${TEST_TIMEOUTS_FILE:-"$ROOT_DIR/.github/xfstests/ntfs-test-t
 TEST_REPEATS=${TEST_REPEATS:-1}
 CHECK_TIMEOUT=${CHECK_TIMEOUT:-300}
 XFSTESTS_DIR=${XFSTESTS_DIR:-"$ROOT_DIR/exfat-testsuites/xfstests-exfat"}
-TEST_IMAGE=${TEST_IMAGE:-"$ROOT_DIR/ntfs-4kn-$GEOMETRY-test.img"}
-SCRATCH_IMAGE=${SCRATCH_IMAGE:-"$ROOT_DIR/ntfs-4kn-$GEOMETRY-scratch.img"}
-TEST_MNT=${TEST_MNT:-/mnt/ntfs-4kn-$GEOMETRY-test}
-SCRATCH_MNT=${SCRATCH_MNT:-/mnt/ntfs-4kn-$GEOMETRY-scratch}
+TEST_IMAGE=${TEST_IMAGE:-"$ROOT_DIR/$RESULTS_BASENAME-test.img"}
+SCRATCH_IMAGE=${SCRATCH_IMAGE:-"$ROOT_DIR/$RESULTS_BASENAME-scratch.img"}
+TEST_MNT=${TEST_MNT:-/mnt/$RESULTS_BASENAME-test}
+SCRATCH_MNT=${SCRATCH_MNT:-/mnt/$RESULTS_BASENAME-scratch}
 
 TEST_DEV=
 SCRATCH_DEV=
@@ -139,14 +154,15 @@ else
 		printf '%s\n' "$requested_case" >> "$RESULTS_DIR/tests.list"
 	done
 fi
-printf 'geometry=%s\nmft_record_size=%s\ntest_cases=%s\ntest_repeats=%s\ncheck_timeout=%s\ntimeout_overrides_file=%s\n' \
-	"$GEOMETRY" "$MFT_RECORD_SIZE" "$TEST_CASES" "$TEST_REPEATS" \
+printf 'geometry=%s\nsector_size=%s\nphysical_sector_size=%s\ncluster_size=%s\nmft_record_size=%s\ntest_cases=%s\ntest_repeats=%s\ncheck_timeout=%s\ntimeout_overrides_file=%s\n' \
+	"$GEOMETRY" "$SECTOR_SIZE" "$PHYSICAL_SECTOR_SIZE" "$CLUSTER_SIZE" \
+	"$MFT_RECORD_SIZE" "$TEST_CASES" "$TEST_REPEATS" \
 	"$CHECK_TIMEOUT" "$TEST_TIMEOUTS_FILE" \
 	> "$RESULTS_DIR/repetitions.manifest"
 
 truncate -s 100G "$TEST_IMAGE" "$SCRATCH_IMAGE"
-TEST_DEV=$(sudo losetup --find --show --sector-size 4096 "$TEST_IMAGE")
-SCRATCH_DEV=$(sudo losetup --find --show --sector-size 4096 "$SCRATCH_IMAGE")
+TEST_DEV=$(sudo losetup --find --show --sector-size "$SECTOR_SIZE" "$TEST_IMAGE")
+SCRATCH_DEV=$(sudo losetup --find --show --sector-size "$SECTOR_SIZE" "$SCRATCH_IMAGE")
 
 record_geometry()
 {
@@ -172,8 +188,9 @@ record_geometry()
 		echo "sysfs_physical=$(sudo cat "$queue_dir/physical_block_size")"
 	} | tee "$RESULTS_DIR/geometry-$label.txt"
 
-	if [[ "$logical" != 4096 || "$physical" != 4096 ]]; then
-		echo "Device $dev is not native 4Kn: $logical/$physical" >&2
+	if [[ "$logical" != "$SECTOR_SIZE" ||
+		"$physical" != "$PHYSICAL_SECTOR_SIZE" ]]; then
+		echo "Device $dev does not match profile geometry: $logical/$physical" >&2
 		classify_failure SETUP_BLOCKED
 		exit 2
 	fi
@@ -201,7 +218,8 @@ format_device()
 	local dev=$2
 	local log="$RESULTS_DIR/mkntfs-$label.log"
 
-	if ! sudo "$MKNTFS" -Q -s 4096 -c 4096 -r "$MFT_RECORD_SIZE" "$dev" \
+	if ! sudo "$MKNTFS" -Q -s "$SECTOR_SIZE" -c "$CLUSTER_SIZE" \
+		-r "$MFT_RECORD_SIZE" "$dev" \
 		> "$log" 2>&1; then
 		cat "$log" >&2
 		classify_failure SETUP_BLOCKED
@@ -229,12 +247,15 @@ check_boot_geometry()
 	local dev=$2
 	local output="$RESULTS_DIR/boot-$label.txt"
 
-	if ! sudo python3 - "$dev" "$MFT_RECORD_SIZE" > "$output" <<'PY'
+	if ! sudo python3 - "$dev" "$SECTOR_SIZE" "$CLUSTER_SIZE" \
+		"$MFT_RECORD_SIZE" > "$output" <<'PY'
 import struct
 import sys
 
 device = sys.argv[1]
-expected_mft_record_size = int(sys.argv[2])
+expected_bytes_per_sector = int(sys.argv[2])
+expected_cluster_size = int(sys.argv[3])
+expected_mft_record_size = int(sys.argv[4])
 with open(device, "rb", buffering=0) as stream:
     boot = stream.read(4096)
 
@@ -253,9 +274,9 @@ print(f"cluster_size={cluster_size}")
 print(f"mft_record_size={mft_record_size}")
 
 if (bytes_per_sector, cluster_size, mft_record_size) != (
-    4096, 4096, expected_mft_record_size
+    expected_bytes_per_sector, expected_cluster_size, expected_mft_record_size
 ):
-    raise SystemExit("unexpected NTFS 4Kn boot geometry")
+    raise SystemExit("unexpected NTFS boot geometry")
 PY
 	then
 		cat "$output" >&2
@@ -282,7 +303,7 @@ export TEST_DIR=$TEST_MNT
 export SCRATCH_DEV=$SCRATCH_DEV
 export SCRATCH_MNT=$SCRATCH_MNT
 export FSTYP=ntfs
-export MKFS_OPTIONS="-q -s 4096 -c 4096 -r $MFT_RECORD_SIZE"
+export MKFS_OPTIONS="-q -s $SECTOR_SIZE -c $CLUSTER_SIZE -r $MFT_RECORD_SIZE"
 export MOUNT_OPTIONS="-osymlink=native,native_symlink=rel"
 EOF
 
@@ -357,7 +378,7 @@ while IFS= read -r test_case; do
 			fi
 		done
 		if [[ "$status" == FAIL || "$status" == NOTRUN ]]; then
-			echo "Reformatting native 4Kn devices after $test_case ($status)"
+			echo "Reformatting profile devices after $test_case ($status)"
 			reformat_devices
 		fi
 	done

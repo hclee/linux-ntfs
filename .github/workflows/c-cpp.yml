@@ -12,13 +12,14 @@ on:
   workflow_dispatch:
     inputs:
       geometry:
-        description: "Native 4Kn profile geometry"
+        description: "NTFS sector/cluster/MFT geometry profile"
         default: m1k
         required: true
         type: choice
         options:
         - m1k
         - m4k
+        - 512e-c4k-m1k
       test_case:
         description: "Run one case five times, or all listed cases once"
         default: generic/013
@@ -89,14 +90,25 @@ jobs:
         GEOMETRY: ${{ github.event.inputs.geometry || 'm1k' }}
       run: |
         case "$GEOMETRY" in
-          m1k) MFT_RECORD_SIZE=1024 ;;
+          m1k|m4k)
+            SECTOR_SIZE=4096
+            CLUSTER_SIZE=4096
+            ;;
+          512e-c4k-m1k)
+            SECTOR_SIZE=512
+            CLUSTER_SIZE=4096
+            ;;
+          *) echo "Unsupported geometry profile: $GEOMETRY" >&2; exit 2 ;;
+        esac
+        case "$GEOMETRY" in
           m4k) MFT_RECORD_SIZE=4096 ;;
-          *) echo "GEOMETRY must be m1k or m4k" >&2; exit 2 ;;
+          *) MFT_RECORD_SIZE=1024 ;;
         esac
         truncate -s 10G full_test.img
-        loop=$(sudo losetup --find --show --sector-size 4096 full_test.img)
+        loop=$(sudo losetup --find --show --sector-size "$SECTOR_SIZE" full_test.img)
         trap 'sudo umount ./full_test/ 2>/dev/null || true; sudo losetup --detach "$loop" 2>/dev/null || true; rm -f full_test.img' EXIT
-        sudo mkntfs -Q -s 4096 -c 4096 -r "$MFT_RECORD_SIZE" "$loop"
+        sudo mkntfs -Q -s "$SECTOR_SIZE" -c "$CLUSTER_SIZE" \
+          -r "$MFT_RECORD_SIZE" "$loop"
         mkdir -p full_test
         sudo mount -t ntfs "$loop" ./full_test/
         cd full_test/
@@ -113,7 +125,7 @@ jobs:
         cd ..
         sudo umount ./full_test/
         sudo ntfsck -n "$loop"
-    - name: native 4kn xfstests (one setup, sequential profile)
+    - name: profile xfstests (one setup, sequential profile)
       env:
         GEOMETRY: ${{ github.event.inputs.geometry || 'm1k' }}
         TEST_CASES: ${{ github.event.inputs.test_cases || github.event.inputs.test_case || 'generic/013' }}
@@ -122,7 +134,12 @@ jobs:
       run: |
         export PATH=/usr/local/bin:/usr/local/sbin:$PATH
         export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-        RESULTS_DIR="$GITHUB_WORKSPACE/ntfs-4kn-${GEOMETRY}-results" \
+        case "$GEOMETRY" in
+          m1k|m4k) RESULTS_BASENAME="ntfs-4kn-$GEOMETRY" ;;
+          512e-c4k-m1k) RESULTS_BASENAME="ntfs-$GEOMETRY" ;;
+          *) echo "Unsupported geometry profile: $GEOMETRY" >&2; exit 2 ;;
+        esac
+        RESULTS_DIR="$GITHUB_WORKSPACE/${RESULTS_BASENAME}-results" \
           bash .github/scripts/run-ntfs-4kn-xfstests.sh
     - uses: actions/upload-artifact@v4
       if: always()
