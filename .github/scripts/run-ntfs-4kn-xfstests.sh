@@ -17,6 +17,7 @@ m4k)
 esac
 RESULTS_DIR=${RESULTS_DIR:-"$ROOT_DIR/ntfs-4kn-$GEOMETRY-results"}
 TEST_CASE=${TEST_CASE:-}
+TEST_CASES=${TEST_CASES:-${TEST_CASE:-}}
 TESTS_FILE=${TESTS_FILE:-"$ROOT_DIR/.github/xfstests/ntfs-geometry-full.list"}
 TEST_TIMEOUTS_FILE=${TEST_TIMEOUTS_FILE:-"$ROOT_DIR/.github/xfstests/ntfs-test-timeouts.conf"}
 TEST_REPEATS=${TEST_REPEATS:-1}
@@ -105,8 +106,8 @@ if [[ ! -f "$TESTS_FILE" ]]; then
 	exit 2
 fi
 
-if [[ -z "$TEST_CASE" ]]; then
-	echo "TEST_CASE is required" >&2
+if [[ -z "$TEST_CASES" ]]; then
+	echo "TEST_CASES is required" >&2
 	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
 	exit 2
 fi
@@ -121,19 +122,25 @@ if [[ "$CHECK_TIMEOUT" != 0 && ! "$CHECK_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
 	exit 2
 fi
 validate_timeout_overrides
-if [[ "$TEST_CASE" == all ]]; then
+if [[ "$TEST_CASES" == all ]]; then
 	cp "$TESTS_FILE" "$RESULTS_DIR/tests.list"
 	TEST_REPEATS=1
 else
-	if ! grep -Fxq "$TEST_CASE" "$TESTS_FILE"; then
-		echo "Requested case is not in the full profile: $TEST_CASE" >&2
-		printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
-		exit 2
-	fi
-	printf '%s\n' "$TEST_CASE" > "$RESULTS_DIR/tests.list"
+	: > "$RESULTS_DIR/tests.list"
+	IFS=',' read -r -a requested_cases <<< "$TEST_CASES"
+	for requested_case in "${requested_cases[@]}"; do
+		requested_case=${requested_case//[[:space:]]/}
+		if [[ -z "$requested_case" ]] ||
+			! grep -Fxq "$requested_case" "$TESTS_FILE"; then
+			echo "Requested case is not in the full profile: $requested_case" >&2
+			printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
+			exit 2
+		fi
+		printf '%s\n' "$requested_case" >> "$RESULTS_DIR/tests.list"
+	done
 fi
-printf 'geometry=%s\nmft_record_size=%s\ntest_case=%s\ntest_repeats=%s\ncheck_timeout=%s\ntimeout_overrides_file=%s\n' \
-	"$GEOMETRY" "$MFT_RECORD_SIZE" "$TEST_CASE" "$TEST_REPEATS" \
+printf 'geometry=%s\nmft_record_size=%s\ntest_cases=%s\ntest_repeats=%s\ncheck_timeout=%s\ntimeout_overrides_file=%s\n' \
+	"$GEOMETRY" "$MFT_RECORD_SIZE" "$TEST_CASES" "$TEST_REPEATS" \
 	"$CHECK_TIMEOUT" "$TEST_TIMEOUTS_FILE" \
 	> "$RESULTS_DIR/repetitions.manifest"
 

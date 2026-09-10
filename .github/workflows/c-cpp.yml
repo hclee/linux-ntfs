@@ -24,6 +24,10 @@ on:
         default: generic/013
         required: true
         type: string
+      test_cases:
+        description: "Comma-separated cases to run sequentially in one setup"
+        required: false
+        type: string
       test_repeats:
         description: "Number of repetitions for a selected test case"
         default: "5"
@@ -112,7 +116,7 @@ jobs:
     - name: native 4kn xfstests (one setup, sequential profile)
       env:
         GEOMETRY: ${{ github.event.inputs.geometry || 'm1k' }}
-        TEST_CASE: ${{ github.event.inputs.test_case || 'generic/013' }}
+        TEST_CASES: ${{ github.event.inputs.test_cases || github.event.inputs.test_case || 'generic/013' }}
         TEST_REPEATS: ${{ github.event.inputs.test_repeats || '5' }}
         CHECK_TIMEOUT: ${{ github.event.inputs.check_timeout || '120' }}
       run: |
