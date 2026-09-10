@@ -147,7 +147,7 @@ jobs:
         name: ntfs-4kn-c4k-${{ github.event.inputs.geometry || 'm1k' }}-${{ github.run_id }}
         if-no-files-found: warn
         path: |
-          ntfs-4kn-*-results/
+          ntfs-*-results/
           exfat-testsuites/xfstests-exfat/results/
           host-module-build.log
           host-module-install.log
