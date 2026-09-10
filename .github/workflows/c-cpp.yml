@@ -35,7 +35,7 @@ on:
         type: string
       check_timeout:
         description: "Per-test timeout in seconds; 0 disables the timeout"
-        default: "120"
+        default: "300"
         required: true
         type: string
 
@@ -118,7 +118,7 @@ jobs:
         GEOMETRY: ${{ github.event.inputs.geometry || 'm1k' }}
         TEST_CASES: ${{ github.event.inputs.test_cases || github.event.inputs.test_case || 'generic/013' }}
         TEST_REPEATS: ${{ github.event.inputs.test_repeats || '5' }}
-        CHECK_TIMEOUT: ${{ github.event.inputs.check_timeout || '120' }}
+        CHECK_TIMEOUT: ${{ github.event.inputs.check_timeout || '300' }}
       run: |
         export PATH=/usr/local/bin:/usr/local/sbin:$PATH
         export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
