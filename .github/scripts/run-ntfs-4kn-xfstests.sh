@@ -18,6 +18,7 @@ esac
 RESULTS_DIR=${RESULTS_DIR:-"$ROOT_DIR/ntfs-4kn-$GEOMETRY-results"}
 TEST_CASE=${TEST_CASE:-}
 TESTS_FILE=${TESTS_FILE:-"$ROOT_DIR/.github/xfstests/ntfs-geometry-full.list"}
+TEST_TIMEOUTS_FILE=${TEST_TIMEOUTS_FILE:-"$ROOT_DIR/.github/xfstests/ntfs-test-timeouts.conf"}
 TEST_REPEATS=${TEST_REPEATS:-1}
 CHECK_TIMEOUT=${CHECK_TIMEOUT:-120}
 XFSTESTS_DIR=${XFSTESTS_DIR:-"$ROOT_DIR/exfat-testsuites/xfstests-exfat"}
@@ -31,6 +32,42 @@ SCRATCH_DEV=
 overall_status=0
 
 mkdir -p "$RESULTS_DIR"
+
+validate_timeout_overrides()
+{
+	local test_case
+	local timeout
+	local extra
+
+	[[ -f "$TEST_TIMEOUTS_FILE" ]] || return 0
+	while read -r test_case timeout extra; do
+		[[ -z "$test_case" || "$test_case" == \#* ]] && continue
+		if [[ -n "$extra" || ! "$test_case" =~ ^generic/[0-9]+$ ||
+			("$timeout" != 0 && ! "$timeout" =~ ^[1-9][0-9]*$) ]]; then
+			echo "Invalid timeout override: $test_case $timeout $extra" >&2
+			printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
+			exit 2
+		fi
+	done < "$TEST_TIMEOUTS_FILE"
+}
+
+test_timeout()
+{
+	local requested_case=$1
+	local override_case
+	local override_timeout
+
+	if [[ -f "$TEST_TIMEOUTS_FILE" ]]; then
+		while read -r override_case override_timeout; do
+			[[ -z "$override_case" || "$override_case" == \#* ]] && continue
+			if [[ "$override_case" == "$requested_case" ]]; then
+				printf '%s\n' "$override_timeout"
+				return
+			fi
+		done < "$TEST_TIMEOUTS_FILE"
+	fi
+	printf '%s\n' "$CHECK_TIMEOUT"
+}
 
 classify_failure()
 {
@@ -83,6 +120,7 @@ if [[ "$CHECK_TIMEOUT" != 0 && ! "$CHECK_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
 	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
 	exit 2
 fi
+validate_timeout_overrides
 if [[ "$TEST_CASE" == all ]]; then
 	cp "$TESTS_FILE" "$RESULTS_DIR/tests.list"
 	TEST_REPEATS=1
@@ -94,9 +132,9 @@ else
 	fi
 	printf '%s\n' "$TEST_CASE" > "$RESULTS_DIR/tests.list"
 fi
-printf 'geometry=%s\nmft_record_size=%s\ntest_case=%s\ntest_repeats=%s\ncheck_timeout=%s\n' \
+printf 'geometry=%s\nmft_record_size=%s\ntest_case=%s\ntest_repeats=%s\ncheck_timeout=%s\ntimeout_overrides_file=%s\n' \
 	"$GEOMETRY" "$MFT_RECORD_SIZE" "$TEST_CASE" "$TEST_REPEATS" \
-	"$CHECK_TIMEOUT" \
+	"$CHECK_TIMEOUT" "$TEST_TIMEOUTS_FILE" \
 	> "$RESULTS_DIR/repetitions.manifest"
 
 truncate -s 100G "$TEST_IMAGE" "$SCRATCH_IMAGE"
@@ -251,11 +289,12 @@ while IFS= read -r test_case; do
 	result_name=${test_case#generic/}
 	for ((iteration = 1; iteration <= TEST_REPEATS; iteration++)); do
 		log="$RESULTS_DIR/${safe_case}.attempt-${iteration}.log"
-		printf 'Running %s (iteration %s/%s)\n' "$test_case" "$iteration" \
-			"$TEST_REPEATS"
+		test_check_timeout=$(test_timeout "$test_case")
+		printf 'Running %s (iteration %s/%s, timeout=%ss)\n' "$test_case" \
+			"$iteration" "$TEST_REPEATS" "$test_check_timeout"
 		sudo rm -f "$XFSTESTS_DIR/results/generic/$result_name."{full,out.bad,dmesg,notrun}
 		set +e
-		if (( CHECK_TIMEOUT == 0 )); then
+		if (( test_check_timeout == 0 )); then
 			(
 				cd "$XFSTESTS_DIR"
 				sudo ./check "$test_case"
@@ -264,7 +303,7 @@ while IFS= read -r test_case; do
 			(
 				cd "$XFSTESTS_DIR"
 				sudo timeout --signal=TERM --kill-after=10s \
-					"${CHECK_TIMEOUT}s" ./check "$test_case"
+					"${test_check_timeout}s" ./check "$test_case"
 			) > "$log" 2>&1
 		fi
 		rc=$?
@@ -274,7 +313,7 @@ while IFS= read -r test_case; do
 		if [[ -f "$XFSTESTS_DIR/results/generic/$result_name.notrun" ]]; then
 			status=NOTRUN
 			overall_status=2
-		elif (( CHECK_TIMEOUT > 0 && rc == 124 )); then
+		elif (( test_check_timeout > 0 && rc == 124 )); then
 			status=TIMEOUT
 			overall_status=3
 		elif grep -Eiq '9p|timed out|timeout' "$log"; then
