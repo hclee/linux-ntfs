@@ -78,8 +78,8 @@ if [[ ! "$TEST_REPEATS" =~ ^[1-9][0-9]*$ ]]; then
 	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
 	exit 2
 fi
-if [[ ! "$CHECK_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
-	echo "CHECK_TIMEOUT must be a positive integer" >&2
+if [[ "$CHECK_TIMEOUT" != 0 && ! "$CHECK_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+	echo "CHECK_TIMEOUT must be zero or a positive integer" >&2
 	printf '%s\n' "SETUP_BLOCKED" > "$RESULTS_DIR/classification.txt"
 	exit 2
 fi
@@ -94,8 +94,9 @@ else
 	fi
 	printf '%s\n' "$TEST_CASE" > "$RESULTS_DIR/tests.list"
 fi
-printf 'geometry=%s\nmft_record_size=%s\ntest_case=%s\ntest_repeats=%s\n' \
+printf 'geometry=%s\nmft_record_size=%s\ntest_case=%s\ntest_repeats=%s\ncheck_timeout=%s\n' \
 	"$GEOMETRY" "$MFT_RECORD_SIZE" "$TEST_CASE" "$TEST_REPEATS" \
+	"$CHECK_TIMEOUT" \
 	> "$RESULTS_DIR/repetitions.manifest"
 
 truncate -s 100G "$TEST_IMAGE" "$SCRATCH_IMAGE"
@@ -254,11 +255,18 @@ while IFS= read -r test_case; do
 			"$TEST_REPEATS"
 		sudo rm -f "$XFSTESTS_DIR/results/generic/$result_name."{full,out.bad,dmesg,notrun}
 		set +e
-		(
-			cd "$XFSTESTS_DIR"
-			sudo timeout --signal=TERM --kill-after=10s \
-				"${CHECK_TIMEOUT}s" ./check "$test_case"
-		) > "$log" 2>&1
+		if (( CHECK_TIMEOUT == 0 )); then
+			(
+				cd "$XFSTESTS_DIR"
+				sudo ./check "$test_case"
+			) > "$log" 2>&1
+		else
+			(
+				cd "$XFSTESTS_DIR"
+				sudo timeout --signal=TERM --kill-after=10s \
+					"${CHECK_TIMEOUT}s" ./check "$test_case"
+			) > "$log" 2>&1
+		fi
 		rc=$?
 		set -e
 		cat "$log"
@@ -266,7 +274,7 @@ while IFS= read -r test_case; do
 		if [[ -f "$XFSTESTS_DIR/results/generic/$result_name.notrun" ]]; then
 			status=NOTRUN
 			overall_status=2
-		elif (( rc == 124 )); then
+		elif (( CHECK_TIMEOUT > 0 && rc == 124 )); then
 			status=TIMEOUT
 			overall_status=3
 		elif grep -Eiq '9p|timed out|timeout' "$log"; then

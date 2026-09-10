@@ -24,6 +24,16 @@ on:
         default: generic/013
         required: true
         type: string
+      test_repeats:
+        description: "Number of repetitions for a selected test case"
+        default: "5"
+        required: true
+        type: string
+      check_timeout:
+        description: "Per-test timeout in seconds; 0 disables the timeout"
+        default: "120"
+        required: true
+        type: string
 
 jobs:
   build:
@@ -103,7 +113,8 @@ jobs:
       env:
         GEOMETRY: ${{ github.event.inputs.geometry || 'm1k' }}
         TEST_CASE: ${{ github.event.inputs.test_case || 'generic/013' }}
-        TEST_REPEATS: 5
+        TEST_REPEATS: ${{ github.event.inputs.test_repeats || '5' }}
+        CHECK_TIMEOUT: ${{ github.event.inputs.check_timeout || '120' }}
       run: |
         export PATH=/usr/local/bin:/usr/local/sbin:$PATH
         export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
