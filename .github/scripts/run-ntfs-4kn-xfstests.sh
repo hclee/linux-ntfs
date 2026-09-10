@@ -319,7 +319,6 @@ while IFS= read -r test_case; do
 
 		if [[ -f "$XFSTESTS_DIR/results/generic/$result_name.notrun" ]]; then
 			status=NOTRUN
-			overall_status=2
 		elif (( test_check_timeout > 0 && rc == 124 )); then
 			status=TIMEOUT
 			overall_status=3
@@ -375,8 +374,6 @@ fi
 
 if (( overall_status == 0 )); then
 	printf '%s\n' "PASS" > "$RESULTS_DIR/classification.txt"
-elif (( overall_status == 2 )); then
-	printf '%s\n' "NOTRUN_OR_SETUP" > "$RESULTS_DIR/classification.txt"
 elif (( overall_status == 3 )); then
 	printf '%s\n' "ENVIRONMENT" > "$RESULTS_DIR/classification.txt"
 else
