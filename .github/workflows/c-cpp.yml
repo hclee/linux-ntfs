@@ -50,8 +50,13 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-      with:
-        ref: ${{ github.event.inputs.source_ref || github.ref }}
+    - name: checkout requested source
+      if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref != '' }}
+      env:
+        SOURCE_REF: ${{ github.event.inputs.source_ref }}
+      run: |
+        git fetch --no-tags --depth=1 origin "$SOURCE_REF"
+        git checkout --detach "$SOURCE_REF"
     - name: checkout CI helpers
       if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref != '' }}
       uses: actions/checkout@v4
