@@ -3808,9 +3808,9 @@ static int ntfs_write_mft_block(NTFS_MFT_WB_ARGS)
 		submit_bio(child);
 	}
 	ntfs_start_mft_writeback(ctx);
+	folio_mark_uptodate(folio);
 	if (defer || redirty)
 		folio_redirty_for_writepage(wbc, folio);
-	folio_mark_uptodate(folio);
 	kunmap_local(kaddr);
 	kaddr = NULL;
 	folio_unlock(folio);
