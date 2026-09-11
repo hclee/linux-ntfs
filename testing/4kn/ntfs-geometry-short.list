@@ -1,0 +1,16 @@
+# Fast read/write and MFT writeback regression set.
+# generic/030 is excluded because the same native-4Kn failure reproduces
+# before 72845a26b3ed~1 and is not a regression in the tested range.
+generic/001
+generic/013
+generic/029
+generic/069
+generic/112
+generic/113
+generic/114
+generic/127
+generic/169
+generic/325
+generic/418
+generic/464
+generic/465
