@@ -328,9 +328,32 @@ static int ntfs_setattr_size(struct inode *vi, struct iattr *attr)
 #endif
 #endif
 		if (err)
+			filemap_invalidate_unlock(vi->i_mapping);
+		if (err)
 			return err;
 	}
 #endif
+	if (NInoNonResident(NTFS_I(vi)) && attr->ia_size < old_size) {
+		/*
+		 * ntfs_non_resident_attr_shrink() drops folios while holding
+		 * mrec_lock.  If one is under writeback, the truncate path waits
+		 * for it, while writeback needs mrec_lock to resolve its mapping:
+		 *
+		 *   truncate: mrec_lock -> folio_wait_writeback()
+		 *   writeback: folio writeback -> mrec_lock
+		 *
+		 * The wait comes from the core truncate helper, so this inversion
+		 * does not require an explicit NTFS folio_wait_writeback() call.
+		 * iomap_truncate_page() may dirty the EOF folio, so wait after it
+		 * and before entering the mrec_lock-protected truncate path.
+		 */
+		err = filemap_write_and_wait_range(vi->i_mapping, attr->ia_size,
+				LLONG_MAX);
+		if (err) {
+			filemap_invalidate_unlock(vi->i_mapping);
+			return err;
+		}
+	}
 
 	if (attr->ia_size > old_size) {
 		truncate_pagecache(vi, old_size);
