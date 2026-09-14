@@ -157,8 +157,15 @@ jobs:
         make -j$((`nproc`+1)) > /dev/null
         echo 'FSTYP=ntfs' >> local.config
         for iteration in $(seq 1 10); do
-          echo "generic/650 repetition ${iteration}/10"
-          sudo ./check generic/650
+          started=$(date --iso-8601=seconds)
+          echo "generic/650 repetition ${iteration}/10 started=${started}"
+          if timeout --foreground --kill-after=30s 10m sudo ./check generic/650; then
+            echo "generic/650 repetition ${iteration}/10 passed"
+          else
+            status=$?
+            echo "generic/650 repetition ${iteration}/10 failed status=${status}"
+            exit "$status"
+          fi
         done
     - uses: actions/upload-artifact@v4
       if: always()
