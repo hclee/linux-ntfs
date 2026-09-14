@@ -2393,6 +2393,8 @@ static int ntfs_mft_record_format(const struct ntfs_volume *vol, const s64 mft_n
 		return PTR_ERR(folio);
 	}
 	folio_lock(folio);
+	if (folio_test_writeback(folio))
+		folio_wait_writeback(folio);
 	folio_clear_uptodate(folio);
 	m = (struct mft_record *)((u8 *)kmap_local_folio(folio, 0) + ofs);
 #else
@@ -2403,6 +2405,7 @@ static int ntfs_mft_record_format(const struct ntfs_volume *vol, const s64 mft_n
 		return PTR_ERR(page);
 	}
 	lock_page(page);
+	wait_on_page_writeback(page);
 	BUG_ON(!PageUptodate(page));
 	ClearPageUptodate(page);
 	m = (struct mft_record *)((u8 *)page_address(page) + ofs);
@@ -2943,6 +2946,8 @@ mft_rec_already_initialized:
 		goto undo_mftbmp_alloc;
 	}
 	folio_lock(folio);
+	if (folio_test_writeback(folio))
+		folio_wait_writeback(folio);
 	folio_clear_uptodate(folio);
 	m = (struct mft_record *)((u8 *)kmap_local_folio(folio, 0) + ofs);
 #else
@@ -2954,6 +2959,7 @@ mft_rec_already_initialized:
 		goto undo_mftbmp_alloc;
 	}
 	lock_page(page);
+	wait_on_page_writeback(page);
 	BUG_ON(!PageUptodate(page));
 	ClearPageUptodate(page);
 	m = (struct mft_record *)((u8 *)page_address(page) + ofs);
