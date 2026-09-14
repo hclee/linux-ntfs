@@ -70,6 +70,8 @@ jobs:
         echo 'MOUNT_OPTIONS="-osymlink=native,native_symlink=rel"' >> local.config
         make -j$((`nproc`+1)) > /dev/null
         echo 'FSTYP=ntfs' >> local.config
+        ci_log_dir="$GITHUB_WORKSPACE/ci-generic-650"
+        mkdir -p "$ci_log_dir"
         for iteration in $(seq 1 10); do
           started=$(date --iso-8601=seconds)
           echo "generic/650 repetition ${iteration}/10 started=${started}"
@@ -78,6 +80,12 @@ jobs:
           else
             status=$?
             echo "generic/650 repetition ${iteration}/10 failed status=${status}"
+            sudo sh -c 'echo w > /proc/sysrq-trigger' || true
+            sudo sh -c 'echo t > /proc/sysrq-trigger' || true
+            sudo dmesg --color=never > \
+              "$ci_log_dir/generic-650-${iteration}.dmesg" || true
+            ps -eLo pid,ppid,stat,wchan:32,comm,args > \
+              "$ci_log_dir/generic-650-${iteration}.ps" || true
             exit "$status"
           fi
         done
@@ -85,4 +93,6 @@ jobs:
       if: always()
       with:
               name: xfs_results
-              path: /home/runner/work/linux-ntfs/linux-ntfs/exfat-testsuites/xfstests-exfat/results/generic/
+              path: |
+                /home/runner/work/linux-ntfs/linux-ntfs/exfat-testsuites/xfstests-exfat/results/generic/
+                /home/runner/work/linux-ntfs/linux-ntfs/ci-generic-650/
