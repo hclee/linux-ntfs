@@ -1,0 +1,40 @@
+name: Misc platform build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: install packages for ARM kernel build
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc bison flex gcc-arm-linux-gnueabihf \
+          gzip libelf-dev libssl-dev tar wget
+    - name: build latest ARM kernel and link NTFS built-in
+      run: |
+        wget --no-check-certificate \
+          https://github.com/torvalds/linux/archive/refs/heads/master.tar.gz \
+          -O linux-latest.tar.gz
+        tar xf linux-latest.tar.gz
+        rm linux-latest.tar.gz
+        mv linux-master ../linux-latest
+        mkdir -p ../linux-latest/fs/ntfs
+        cp -a -- ./* ../linux-latest/fs/ntfs/
+        cd ../linux-latest
+        if ! grep -q 'source "fs/ntfs/Kconfig"' fs/Kconfig; then
+          sed -i '/source "fs\/fat\/Kconfig"/a source "fs\/ntfs\/Kconfig"' fs/Kconfig
+        fi
+        if ! grep -q 'obj-\$(CONFIG_NTFS_FS).*ntfs/' fs/Makefile; then
+          sed -i '/obj-\$(CONFIG_EXFAT_FS).*+= exfat\//i obj-$(CONFIG_NTFS_FS) += ntfs/' fs/Makefile
+        fi
+        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- multi_v7_defconfig
+        ./scripts/config --file .config --enable CONFIG_NTFS_FS
+        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
+        grep -qx 'CONFIG_NTFS_FS=y' .config
+        make -j"$(nproc)" \
+          ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- vmlinux
