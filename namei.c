@@ -439,9 +439,8 @@ static struct ntfs_inode *__ntfs_create(struct user_namespace *mnt_userns, struc
 			ni->itype.index.vcn_size_bits =
 				vol->cluster_size_bits;
 		} else {
-			ni->itype.index.vcn_size = vol->sector_size;
-			ni->itype.index.vcn_size_bits =
-				vol->sector_size_bits;
+			ni->itype.index.vcn_size = NTFS_BLOCK_SIZE;
+			ni->itype.index.vcn_size_bits = NTFS_BLOCK_SIZE_BITS;
 		}
 	}
 
@@ -607,7 +606,7 @@ static struct ntfs_inode *__ntfs_create(struct user_namespace *mnt_userns, struc
 				NTFS_B_TO_CLU(vol, ni->vol->index_record_size);
 		else
 			ir->clusters_per_index_block =
-				ni->vol->index_record_size >> ni->vol->sector_size_bits;
+				ni->vol->index_record_size >> NTFS_BLOCK_SIZE_BITS;
 		ir->index.entries_offset = cpu_to_le32(sizeof(struct index_header));
 		ir->index.index_length = cpu_to_le32(index_len);
 		ir->index.allocated_size = cpu_to_le32(index_len);
@@ -1323,13 +1322,19 @@ static int __ntfs_link(struct ntfs_inode *ni, struct ntfs_inode *dir_ni,
 		fn->file_attributes |= FILE_ATTR_HIDDEN;
 
 	fn->creation_time = utc2ntfs(ni->i_crtime);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
 	fn->last_data_change_time = utc2ntfs(inode_get_mtime(vi));
-	fn->last_mft_change_time = utc2ntfs(inode_get_ctime(vi));
-	fn->last_access_time = utc2ntfs(inode_get_atime(vi));
 #else
 	fn->last_data_change_time = utc2ntfs(vi->i_mtime);
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	fn->last_mft_change_time = utc2ntfs(inode_get_ctime(vi));
+#else
 	fn->last_mft_change_time = utc2ntfs(vi->i_ctime);
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
+	fn->last_access_time = utc2ntfs(inode_get_atime(vi));
+#else
 	fn->last_access_time = utc2ntfs(vi->i_atime);
 #endif
 	memcpy(fn->file_name, name, name_len * sizeof(__le16));
