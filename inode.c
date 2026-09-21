@@ -2618,7 +2618,7 @@ static int ntfs_inode_sync_standard_information(struct inode *vi, struct mft_rec
 	}
 
 	/* Update the access times if they have changed. */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
 	nt = utc2ntfs(inode_get_mtime(vi));
 #else
 	nt = utc2ntfs(vi->i_mtime);
@@ -3945,6 +3945,8 @@ static s64 __ntfs_inode_non_resident_attr_pwrite(struct inode *vi,
 
 			folio_lock(folio);
 		}
+
+		folio_wait_writeback(folio);
 
 		if (count == PAGE_SIZE) {
 			offset = 0;
