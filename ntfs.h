@@ -83,6 +83,8 @@ enum {
 	NTFS_MAX_LABEL_LEN	= 128,
 };
 
+#define NTFS_MAX_ATTR_LIST_SIZE	(256 * 1024)
+
 enum {
 	CASE_SENSITIVE = 0,
 	IGNORE_CASE = 1,
