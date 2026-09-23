@@ -680,9 +680,8 @@ struct runlist_element *ntfs_runlists_merge(struct runlist *d_runlist,
 				/* Add an unmapped runlist element. */
 				if (!slots) {
 					drl = ntfs_rl_realloc_nofail(drl, ds,
-							ds + 2);
+							ds + 3);
 					slots = 2;
-					*new_rl_count += 2;
 				}
 				ds++;
 				/* Need to set vcn if it isn't set already. */
@@ -698,11 +697,11 @@ struct runlist_element *ntfs_runlists_merge(struct runlist *d_runlist,
 			ds++;
 			if (!slots) {
 				drl = ntfs_rl_realloc_nofail(drl, ds, ds + 1);
-				*new_rl_count += 1;
 			}
 			drl[ds].vcn = marker_vcn;
 			drl[ds].lcn = LCN_ENOENT;
 			drl[ds].length = (s64)0;
+			*new_rl_count = ds + 1;
 		}
 	}
 	}
@@ -766,6 +765,7 @@ struct runlist_element *ntfs_mapping_pairs_decompress(const struct ntfs_volume *
 	/* Start at vcn = lowest_vcn and lcn 0. */
 	vcn = lowest_vcn;
 #else
+	vcn = le64_to_cpu(attr->data.non_resident.lowest_vcn);
 	/* Validate lowest_vcn from on-disk metadata to ensure it is sane. */
 	if (unlikely(vcn < 0)) {
 		ntfs_error(vol->sb, "Invalid lowest_vcn in mapping pairs.");
