@@ -1862,6 +1862,11 @@ static int ntfs_mft_bitmap_extend_allocation_nolock(struct ntfs_volume *vol)
 	lcn = rl->lcn + rl->length;
 	ntfs_debug("Last lcn of mft bitmap attribute is 0x%llx.",
 			(long long)lcn);
+	/* There is no adjacent cluster if the last run ends at the volume end. */
+	if (lcn >= vol->nr_clusters) {
+		lcn = -1;
+		goto alloc_cluster;
+	}
 	/*
 	 * Attempt to get the cluster following the last allocated cluster by
 	 * hand as it may be in the MFT zone so the allocator would not give it
@@ -1925,6 +1930,9 @@ static int ntfs_mft_bitmap_extend_allocation_nolock(struct ntfs_volume *vol)
 		put_page(page);
 #endif
 		up_write(&vol->lcnbmp_lock);
+		goto alloc_cluster;
+	}
+alloc_cluster:
 		/* Allocate a cluster from the DATA_ZONE. */
 		rl2 = ntfs_cluster_alloc(vol, rl[1].vcn, 1, lcn, DATA_ZONE,
 				true, false, false);
@@ -1953,7 +1961,6 @@ static int ntfs_mft_bitmap_extend_allocation_nolock(struct ntfs_volume *vol)
 		/* Find the last run in the new runlist. */
 		for (; rl[1].length; rl++)
 			;
-	}
 	/*
 	 * Update the attribute record as well.  Note: @rl is the last
 	 * (non-terminator) runlist element of mft bitmap.
