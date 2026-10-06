@@ -1144,6 +1144,9 @@ static bool check_mft_mirror(struct ntfs_volume *vol)
 #else
 	struct page *mft_page = NULL, *mirr_page = NULL;
 #endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	u8 *kmft_base = NULL, *kmirr_base = NULL;
+#endif
 	u8 *kmft = NULL, *kmirr = NULL;
 	struct runlist_element *rl, rl2[2];
 	pgoff_t index;
@@ -1160,9 +1163,9 @@ static bool check_mft_mirror(struct ntfs_volume *vol)
 		/* Switch pages if necessary. */
 		if (!(i % mrecs_per_page)) {
 			if (index) {
-				kunmap_local(kmirr);
+				kunmap_local(kmirr_base);
 				folio_put(mirr_folio);
-				kunmap_local(kmft);
+				kunmap_local(kmft_base);
 				folio_put(mft_folio);
 			}
 			/* Get the $MFT page. */
@@ -1172,7 +1175,8 @@ static bool check_mft_mirror(struct ntfs_volume *vol)
 				ntfs_error(sb, "Failed to read $MFT.");
 				return false;
 			}
-			kmft = kmap_local_folio(mft_folio, 0);
+			kmft_base = kmap_local_folio(mft_folio, 0);
+			kmft = kmft_base;
 			/* Get the $MFTMirr page. */
 			mirr_folio = read_mapping_folio(vol->mftmirr_ino->i_mapping,
 					index, NULL);
@@ -1180,7 +1184,8 @@ static bool check_mft_mirror(struct ntfs_volume *vol)
 				ntfs_error(sb, "Failed to read $MFTMirr.");
 				goto mft_unmap_out;
 			}
-			kmirr = kmap_local_folio(mirr_folio, 0);
+			kmirr_base = kmap_local_folio(mirr_folio, 0);
+			kmirr = kmirr_base;
 			++index;
 		}
 #else
@@ -1221,10 +1226,10 @@ static bool check_mft_mirror(struct ntfs_volume *vol)
 					i);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 mm_unmap_out:
-				kunmap_local(kmirr);
+				kunmap_local(kmirr_base);
 				folio_put(mirr_folio);
 mft_unmap_out:
-				kunmap_local(kmft);
+				kunmap_local(kmft_base);
 				folio_put(mft_folio);
 #else
 mm_unmap_out:
@@ -1269,9 +1274,9 @@ mft_unmap_out:
 	} while (++i < vol->mftmirr_size);
 	/* Release the last folios. */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	kunmap_local(kmirr);
+	kunmap_local(kmirr_base);
 	folio_put(mirr_folio);
-	kunmap_local(kmft);
+	kunmap_local(kmft_base);
 	folio_put(mft_folio);
 #else
 	/* Release the last pages. */
