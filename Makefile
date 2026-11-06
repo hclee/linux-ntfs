@@ -36,11 +36,11 @@ help:
 install: ntfs.ko
 	rm -f ${MDIR}/kernel/fs/ntfs/ntfs.ko
 	install -m644 -b -D ntfs.ko ${MDIR}/kernel/fs/ntfs/ntfs.ko
-	depmod -aq
+	depmod -a
 
 uninstall:
 	rm -rf ${MDIR}/kernel/fs/ntfs
-	depmod -aq
+	depmod -a
 
 endif
 
