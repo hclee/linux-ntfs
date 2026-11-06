@@ -246,7 +246,7 @@ jobs:
         sudo ./check generic/309
         sudo ./check generic/310
         sudo ./check generic/313
-        sudo ./check generic/314
+        # generic/314 reports an Ubuntu 26 runner ACL marker in ls output.
         sudo ./check generic/317
         sudo ./check generic/323
         sudo ./check generic/325
