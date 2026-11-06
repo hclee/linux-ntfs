@@ -91,7 +91,7 @@ jobs:
         sudo apt-get install linux-headers-$(uname -r)
         sudo apt-get install autoconf libtool pkg-config libnl-3-dev libnl-genl-3-dev
         sudo apt-get install xfslibs-dev uuid-dev libtool-bin xfsprogs libgdbm-dev gawk fio attr libattr1-dev libacl1-dev libaio-dev
-        sudo apt-get install libgcrypt20-dev
+        sudo apt-get install libgcrypt20-dev patch
         git clone https://github.com/namjaejeon/exfat-testsuites
         git -C exfat-testsuites checkout --detach 012fdd5d35ffab75da9410287e3af925d8fa8361
         git clone --branch=ntfs-next https://github.com/ntfsprogs-plus/ntfsprogs-plus
@@ -153,6 +153,7 @@ jobs:
         tar xzvf xfstests-exfat.tgz > /dev/null
         rm xfstests-exfat.tgz
         cd xfstests-exfat
+        patch --batch --forward --fuzz=0 -p1 < ../../.github/patches/xfstests-growfiles-strrchr.patch
         cp local.config.ntfs local.config
         echo "" >> local.config
         echo 'MOUNT_OPTIONS="-osymlink=native,native_symlink=rel"' >> local.config

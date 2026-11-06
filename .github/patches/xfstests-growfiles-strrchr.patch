@@ -1,0 +1,13 @@
+diff --git a/ltp/growfiles.c b/ltp/growfiles.c
+--- a/ltp/growfiles.c
++++ b/ltp/growfiles.c
+@@ -50,3 +50,4 @@
+ #include "dataascii.h"
++#include <string.h>
+ #include "random_range.h"
+ #include "databin.h"
+@@ -289,4 +290,2 @@
+-char *strrchr();
+-
+ char *filename;                 /* name of file specified by user */
+ char *cptr;			/* temp char pointer */
