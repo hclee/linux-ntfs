@@ -594,7 +594,8 @@ static int remove_reparse_index(struct inode *rp, struct ntfs_index_context *xr,
 		return 0;
 
 	/* read the existing reparse_tag */
-	size = ntfs_inode_attr_pread(rp, 0, 4, (char *)preparse_tag, 0);
+	size = ntfs_inode_attr_pread(rp, 0, 4, (char *)preparse_tag,
+				     NTFS_ATTR_IO_UNINTERRUPTIBLE_READ);
 	if (size != 4)
 		return -ENODATA;
 
@@ -687,7 +688,8 @@ static int update_reparse_data(struct ntfs_inode *ni, struct ntfs_index_context 
 	}
 
 	/* overwrite value if any */
-	written = ntfs_inode_attr_pwrite(rp_inode, 0, size, value, false, 0);
+	written = ntfs_inode_attr_pwrite(rp_inode, 0, size, value, false,
+					 NTFS_ATTR_IO_UNINTERRUPTIBLE_READ);
 	if (written != size) {
 		ntfs_error(ni->vol->sb, "Failed to update reparse data\n");
 		err = -EIO;

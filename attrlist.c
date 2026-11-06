@@ -97,7 +97,8 @@ static int ntfs_attrlist_repack(struct inode *attr_vi,
 		if (!data)
 			return -ENOMEM;
 
-		written = ntfs_inode_attr_pread(attr_vi, 0, data_size, data, 0);
+		written = ntfs_inode_attr_pread(attr_vi, 0, data_size, data,
+						NTFS_ATTR_IO_UNINTERRUPTIBLE_READ);
 		if (written != data_size) {
 			err = written < 0 ? (int)written : -EIO;
 			goto out_free_data;
@@ -145,7 +146,8 @@ static int ntfs_attrlist_repack(struct inode *attr_vi,
 
 	/* Populate the replacement extent before publishing its mapping pairs. */
 	if (data_size) {
-		written = ntfs_inode_attr_pwrite(attr_vi, 0, data_size, data, true, 0);
+		written = ntfs_inode_attr_pwrite(attr_vi, 0, data_size, data, true,
+						 NTFS_ATTR_IO_UNINTERRUPTIBLE_READ);
 		if (written != data_size) {
 			err = written < 0 ? (int)written : -EIO;
 			goto restore_old_runlist;
@@ -291,7 +293,8 @@ int ntfs_attrlist_update_locked(struct ntfs_inode *base_ni,
 		NInoSetAttrListNonResident(base_ni);
 
 	written = ntfs_inode_attr_pwrite(attr_vi, 0, base_ni->attr_list_size,
-					 base_ni->attr_list, false, 0);
+					 base_ni->attr_list, false,
+					 NTFS_ATTR_IO_UNINTERRUPTIBLE_READ);
 	if (written != base_ni->attr_list_size) {
 		err = written < 0 ? (int)written : -EIO;
 		iput(attr_vi);

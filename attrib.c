@@ -1126,7 +1126,8 @@ int load_attribute_list(struct ntfs_inode *base_ni, u8 *al_start, const s64 size
 		return PTR_ERR(attr_vi);
 	}
 
-	if (ntfs_inode_attr_pread(attr_vi, 0, size, al_start, 0) != size) {
+	if (ntfs_inode_attr_pread(attr_vi, 0, size, al_start,
+				  NTFS_ATTR_IO_UNINTERRUPTIBLE_READ) != size) {
 		iput(attr_vi);
 		ntfs_error(base_ni->vol->sb,
 			   "Failed to read attribute list, mft = %llu",

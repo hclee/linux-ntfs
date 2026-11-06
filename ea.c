@@ -30,7 +30,8 @@ static int ntfs_write_ea(struct ntfs_inode *ni, __le32 type, char *value, s64 ea
 	if (IS_ERR(ea_vi))
 		return PTR_ERR(ea_vi);
 
-	written = ntfs_inode_attr_pwrite(ea_vi, ea_off, ea_size, value, false, 0);
+	written = ntfs_inode_attr_pwrite(ea_vi, ea_off, ea_size, value, false,
+					 NTFS_ATTR_IO_UNINTERRUPTIBLE_READ);
 	if (written != ea_size)
 		err = -EIO;
 	else {
