@@ -99,6 +99,7 @@ jobs:
         sudo useradd fsgqa
         sudo useradd 123456-fsgqa
     - name: Run xfstests testsuite
+      id: xfstests_setup
       run: |
         uname -r
         make > /dev/null
@@ -139,7 +140,7 @@ jobs:
         sudo ntfsck -n /dev/loop22
         rm full_test.img
     - name: xfstest tests 4K cluster size
-      if: always()
+      if: always() && steps.xfstests_setup.outcome == 'success'
       run: |
         truncate -s 100G test.img
         truncate -s 100G scratch.img
