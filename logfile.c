@@ -372,7 +372,7 @@ static int ntfs_check_and_load_restart_page(struct inode *vi,
 		idx = (pos + size) >> PAGE_SHIFT;
 		do {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-			folio = read_mapping_folio(vi->i_mapping, idx, NULL);
+			folio = ntfs_read_mapping_folio_uninterruptible(vi->i_mapping, idx);
 			if (IS_ERR(folio)) {
 				ntfs_error(vi->i_sb, "Error mapping LogFile page (index %lu).",
 						idx);
@@ -385,7 +385,7 @@ static int ntfs_check_and_load_restart_page(struct inode *vi,
 			memcpy((u8 *)trp + have_read, folio_address(folio), size);
 			folio_put(folio);
 #else
-			page = read_mapping_page(vi->i_mapping, idx, NULL);
+			page = ntfs_read_mapping_page_uninterruptible(vi->i_mapping, idx);
 			if (IS_ERR(page)) {
 				ntfs_error(vi->i_sb, "Error mapping LogFile page (index %lu).",
 						idx);
@@ -542,7 +542,7 @@ bool ntfs_check_logfile(struct inode *log_vi, struct restart_page_header **rp)
 				kunmap_local(kbase);
 				folio_put(folio);
 			}
-			folio = read_mapping_folio(mapping, idx, NULL);
+			folio = ntfs_read_mapping_folio_uninterruptible(mapping, idx);
 			if (IS_ERR(folio)) {
 				ntfs_error(vol->sb, "Error mapping LogFile page (index %lu).",
 						idx);
@@ -559,7 +559,7 @@ bool ntfs_check_logfile(struct inode *log_vi, struct restart_page_header **rp)
 				kunmap(page);
 				put_page(page);
 			}
-			page = read_mapping_page(mapping, idx, NULL);
+			page = ntfs_read_mapping_page_uninterruptible(mapping, idx);
 			if (IS_ERR(page)) {
 				ntfs_error(vol->sb, "Error mapping LogFile page (index %lu).",
 						idx);

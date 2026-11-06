@@ -159,7 +159,7 @@ int __ntfs_bitmap_set_bits_in_run(struct inode *vi, const s64 start_bit,
 	/* Get the page containing the first bit (@start_bit). */
 	mapping = vi->i_mapping;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	folio = read_mapping_folio(mapping, index, NULL);
+	folio = ntfs_read_mapping_folio_uninterruptible(mapping, index);
 	if (IS_ERR(folio)) {
 		if (!is_rollback)
 			ntfs_error(vi->i_sb,
@@ -171,7 +171,7 @@ int __ntfs_bitmap_set_bits_in_run(struct inode *vi, const s64 start_bit,
 	folio_lock(folio);
 	kaddr = kmap_local_folio(folio, 0);
 #else
-	page = read_mapping_page(mapping, index, NULL);
+	page = ntfs_read_mapping_page_uninterruptible(mapping, index);
 	if (IS_ERR(page)) {
 		if (!is_rollback)
 			ntfs_error(vi->i_sb,
@@ -237,7 +237,7 @@ int __ntfs_bitmap_set_bits_in_run(struct inode *vi, const s64 start_bit,
 		folio_unlock(folio);
 		kunmap_local(kaddr);
 		folio_put(folio);
-		folio = read_mapping_folio(mapping, ++index, NULL);
+		folio = ntfs_read_mapping_folio_uninterruptible(mapping, ++index);
 		if (IS_ERR(folio)) {
 			ntfs_error(vi->i_sb,
 				   "Failed to map subsequent page (error %li), aborting.",
@@ -254,7 +254,7 @@ int __ntfs_bitmap_set_bits_in_run(struct inode *vi, const s64 start_bit,
 		unlock_page(page);
 		kunmap(page);
 		put_page(page);
-		page = read_mapping_page(mapping, ++index, NULL);
+		page = ntfs_read_mapping_page_uninterruptible(mapping, ++index);
 		if (IS_ERR(page)) {
 			ntfs_error(vi->i_sb,
 				   "Failed to map subsequent page (error %li), aborting.",

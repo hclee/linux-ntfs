@@ -2374,7 +2374,7 @@ err_out:
 }
 
 /*
- * ntfs_attr_set - fill (a part of) an attribute with a byte
+ * ntfs_attr_set - fill (a part of) a metadata attribute with a byte
  * @ni:		ntfs inode describing the attribute to fill
  * @ofs:	offset inside the attribute at which to start to fill
  * @cnt:	number of bytes to fill
@@ -2394,6 +2394,9 @@ int ntfs_attr_set(struct ntfs_inode *ni, s64 ofs, s64 cnt, const u8 val)
 {
 	struct address_space *mapping = VFS_I(ni)->i_mapping;
 	struct folio *folio;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
+	struct page *page;
+#endif
 	pgoff_t index;
 	u8 *addr;
 	unsigned long offset;
@@ -2402,7 +2405,12 @@ int ntfs_attr_set(struct ntfs_inode *ni, s64 ofs, s64 cnt, const u8 val)
 
 	index = ofs >> PAGE_SHIFT;
 	while (cnt) {
-		folio = read_mapping_folio(mapping, index, NULL);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 19, 0)
+		folio = ntfs_read_mapping_folio_uninterruptible(mapping, index);
+#else
+		page = ntfs_read_mapping_page_uninterruptible(mapping, index);
+		folio = IS_ERR(page) ? ERR_CAST(page) : page_folio(page);
+#endif
 		if (IS_ERR(folio)) {
 			ret = PTR_ERR(folio);
 			ntfs_error(VFS_I(ni)->i_sb, "Failed to read a page %lu for attr %#x: %ld",
@@ -2463,7 +2471,7 @@ int ntfs_attr_set(struct ntfs_inode *ni, const s64 ofs, const s64 cnt, const u8 
 	end >>= PAGE_SHIFT;
 	/* If there is a first partial page, need to do it the slow way. */
 	if (start_ofs) {
-		page = read_mapping_page(mapping, idx, NULL);
+		page = ntfs_read_mapping_page_uninterruptible(mapping, idx);
 		if (IS_ERR(page)) {
 			ntfs_error(vol->sb,
 				"Failed to read first partial page (error, index 0x%lx).",
@@ -2519,7 +2527,7 @@ int ntfs_attr_set(struct ntfs_inode *ni, const s64 ofs, const s64 cnt, const u8 
 	}
 	/* If there is a last partial page, need to do it the slow way. */
 	if (end_ofs) {
-		page = read_mapping_page(mapping, idx, NULL);
+		page = ntfs_read_mapping_page_uninterruptible(mapping, idx);
 		if (IS_ERR(page)) {
 			ntfs_error(vol->sb,
 				"Failed to read last partial page (error, index 0x%lx).",

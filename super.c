@@ -1169,8 +1169,8 @@ static bool check_mft_mirror(struct ntfs_volume *vol)
 				folio_put(mft_folio);
 			}
 			/* Get the $MFT page. */
-			mft_folio = read_mapping_folio(vol->mft_ino->i_mapping,
-					index, NULL);
+			mft_folio = ntfs_read_mapping_folio_uninterruptible(
+					vol->mft_ino->i_mapping, index);
 			if (IS_ERR(mft_folio)) {
 				ntfs_error(sb, "Failed to read $MFT.");
 				return false;
@@ -1178,8 +1178,8 @@ static bool check_mft_mirror(struct ntfs_volume *vol)
 			kmft_base = kmap_local_folio(mft_folio, 0);
 			kmft = kmft_base;
 			/* Get the $MFTMirr page. */
-			mirr_folio = read_mapping_folio(vol->mftmirr_ino->i_mapping,
-					index, NULL);
+			mirr_folio = ntfs_read_mapping_folio_uninterruptible(
+					vol->mftmirr_ino->i_mapping, index);
 			if (IS_ERR(mirr_folio)) {
 				ntfs_error(sb, "Failed to read $MFTMirr.");
 				goto mft_unmap_out;
@@ -1198,16 +1198,16 @@ static bool check_mft_mirror(struct ntfs_volume *vol)
 				put_page(mirr_page);
 			}
 			/* Get the $MFT page. */
-			mft_page = read_mapping_page(vol->mft_ino->i_mapping,
-					index, NULL);
+			mft_page = ntfs_read_mapping_page_uninterruptible(
+					vol->mft_ino->i_mapping, index);
 			if (IS_ERR(mft_page)) {
 				ntfs_error(sb, "Failed to read $MFT.");
 				return false;
 			}
 			kmft = page_address(mft_page);
 			/* Get the $MFTMirr page. */
-			mirr_page = read_mapping_page(vol->mftmirr_ino->i_mapping,
-					index, NULL);
+			mirr_page = ntfs_read_mapping_page_uninterruptible(
+					vol->mftmirr_ino->i_mapping, index);
 			if (IS_ERR(mirr_page)) {
 				ntfs_error(sb, "Failed to read $MFTMirr.");
 				goto mft_unmap_out;
@@ -1512,7 +1512,7 @@ static bool load_and_init_attrdef(struct ntfs_volume *vol)
 		/* Read the attrdef table and copy it into the linear buffer. */
 read_partial_attrdef_page:
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-		folio = read_mapping_folio(ino->i_mapping, index, NULL);
+		folio = ntfs_read_mapping_folio_uninterruptible(ino->i_mapping, index);
 		if (IS_ERR(folio))
 			goto free_iput_failed;
 		addr = kmap_local_folio(folio, 0);
@@ -1521,7 +1521,7 @@ read_partial_attrdef_page:
 		kunmap_local(addr);
 		folio_put(folio);
 #else
-		page = read_mapping_page(ino->i_mapping, index, NULL);
+		page = ntfs_read_mapping_page_uninterruptible(ino->i_mapping, index);
 		if (IS_ERR(page))
 			goto free_iput_failed;
 		memcpy((u8 *)vol->attrdef + (index++ << PAGE_SHIFT),
@@ -1592,7 +1592,7 @@ static bool load_and_init_upcase(struct ntfs_volume *vol)
 		/* Read the upcase table and copy it into the linear buffer. */
 read_partial_upcase_page:
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-		folio = read_mapping_folio(ino->i_mapping, index, NULL);
+		folio = ntfs_read_mapping_folio_uninterruptible(ino->i_mapping, index);
 		if (IS_ERR(folio))
 			goto iput_upcase_failed;
 		addr = kmap_local_folio(folio, 0);
@@ -1601,7 +1601,7 @@ read_partial_upcase_page:
 		kunmap_local(addr);
 		folio_put(folio);
 #else
-		page = read_mapping_page(ino->i_mapping, index, NULL);
+		page = ntfs_read_mapping_page_uninterruptible(ino->i_mapping, index);
 		if (IS_ERR(page))
 			goto iput_upcase_failed;
 		memcpy((char *)vol->upcase + (index++ << PAGE_SHIFT),
@@ -2329,7 +2329,7 @@ s64 get_nr_free_clusters(struct ntfs_volume *vol)
 			}
 			page_cache_sync_readahead(mapping, &ra, NULL,
 				index, max_index - index);
-			page = read_mapping_page(mapping, index, NULL);
+			page = ntfs_read_mapping_page_uninterruptible(mapping, index);
 			if (IS_ERR(page))
 				page = NULL;
 			else
@@ -2480,7 +2480,7 @@ static unsigned long __get_nr_free_mft_records(struct ntfs_volume *vol,
 			}
 			page_cache_sync_readahead(mapping, &ra, NULL,
 				index, max_index - index);
-			page = read_mapping_page(mapping, index, NULL);
+			page = ntfs_read_mapping_page_uninterruptible(mapping, index);
 			if (IS_ERR(page))
 				page = NULL;
 			else

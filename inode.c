@@ -4228,7 +4228,7 @@ struct folio *ntfs_get_locked_folio(struct address_space *mapping,
 
 		page_cache_sync_readahead(mapping, ra, NULL, index,
 				end_index - index);
-		folio = read_mapping_folio(mapping, index, NULL);
+		folio = ntfs_read_mapping_folio_uninterruptible(mapping, index);
 		if (!IS_ERR(folio))
 			folio_lock(folio);
 	}
