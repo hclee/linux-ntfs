@@ -24,6 +24,11 @@ enum ntfs_inode_mutex_lock_class {
 	NTFS_EA_MUTEX_NORMAL
 };
 
+enum ntfs_attr_io_flags {
+	NTFS_ATTR_IO_DEFAULT = 0,
+	NTFS_ATTR_IO_UNINTERRUPTIBLE_READ = 1 << 0,
+};
+
 /*
  * The NTFS in-memory inode structure. It is just used as an extension to the
  * fields already provided in the VFS inode.
@@ -370,9 +375,10 @@ int ntfs_inode_add_attrlist(struct ntfs_inode *ni);
 int ntfs_inode_free_empty_extents(struct ntfs_inode *ni);
 void ntfs_destroy_ext_inode(struct ntfs_inode *ni);
 int ntfs_inode_free_space(struct ntfs_inode *ni, int size);
-s64 ntfs_inode_attr_pread(struct inode *vi, s64 pos, s64 count, u8 *buf);
+s64 ntfs_inode_attr_pread(struct inode *vi, s64 pos, s64 count, u8 *buf,
+		enum ntfs_attr_io_flags flags);
 s64 ntfs_inode_attr_pwrite(struct inode *vi, s64 pos, s64 count, u8 *buf,
-		bool sync);
+		bool sync, enum ntfs_attr_io_flags flags);
 int ntfs_inode_close(struct ntfs_inode *ni);
 
 static inline void ntfs_commit_inode(struct inode *vi)

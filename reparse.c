@@ -287,7 +287,7 @@ int ntfs_parse_reparse(struct ntfs_inode *ni, unsigned int *mode)
 	*mode = 0;
 
 	reparse_attr = ntfs_attr_readall(ni, AT_REPARSE_POINT, NULL, 0,
-					 &attr_size);
+					 &attr_size, 0);
 	if (IS_ERR(reparse_attr)) {
 		err = PTR_ERR(reparse_attr);
 		ntfs_error(ni->vol->sb,
@@ -415,7 +415,7 @@ unsigned int ntfs_reparse_tag_dt_types(struct ntfs_volume *vol, unsigned long mr
 		return DT_UNKNOWN;
 
 	reparse_attr = (struct reparse_point *)ntfs_attr_readall(NTFS_I(vi),
-			AT_REPARSE_POINT, NULL, 0, &attr_size);
+			AT_REPARSE_POINT, NULL, 0, &attr_size, 0);
 	if (IS_ERR(reparse_attr))
 		reparse_attr = NULL;
 
@@ -594,7 +594,7 @@ static int remove_reparse_index(struct inode *rp, struct ntfs_index_context *xr,
 		return 0;
 
 	/* read the existing reparse_tag */
-	size = ntfs_inode_attr_pread(rp, 0, 4, (char *)preparse_tag);
+	size = ntfs_inode_attr_pread(rp, 0, 4, (char *)preparse_tag, 0);
 	if (size != 4)
 		return -ENODATA;
 
@@ -687,7 +687,7 @@ static int update_reparse_data(struct ntfs_inode *ni, struct ntfs_index_context 
 	}
 
 	/* overwrite value if any */
-	written = ntfs_inode_attr_pwrite(rp_inode, 0, size, value, false);
+	written = ntfs_inode_attr_pwrite(rp_inode, 0, size, value, false, 0);
 	if (written != size) {
 		ntfs_error(ni->vol->sb, "Failed to update reparse data\n");
 		err = -EIO;

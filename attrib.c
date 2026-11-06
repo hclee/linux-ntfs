@@ -1126,7 +1126,7 @@ int load_attribute_list(struct ntfs_inode *base_ni, u8 *al_start, const s64 size
 		return PTR_ERR(attr_vi);
 	}
 
-	if (ntfs_inode_attr_pread(attr_vi, 0, size, al_start) != size) {
+	if (ntfs_inode_attr_pread(attr_vi, 0, size, al_start, 0) != size) {
 		iput(attr_vi);
 		ntfs_error(base_ni->vol->sb,
 			   "Failed to read attribute list, mft = %llu",
@@ -3195,7 +3195,7 @@ add_non_resident:
 
 	/* Resize and set attribute value. */
 	if (ntfs_attr_truncate(attr_ni, size) ||
-		(val && (ntfs_inode_attr_pwrite(attr_vi, 0, size, val, false) != size))) {
+		(val && (ntfs_inode_attr_pwrite(attr_vi, 0, size, val, false, 0) != size))) {
 		err = -EIO;
 		ntfs_error(sb, "Failed to initialize just added attribute");
 		if (ntfs_attr_rm(attr_ni))
@@ -5708,6 +5708,7 @@ int ntfs_attr_remove(struct ntfs_inode *ni, const __le32 type, __le16 *name,
  * @name:	attribute name in little endian Unicode or AT_UNNAMED or NULL
  * @name_len:	length of attribute @name in Unicode characters (if @name given)
  * @data_size:	if non-NULL then store here the data size
+ * @flags:	attribute I/O flags
  *
  * This function will read the entire content of an ntfs attribute.
  * If @name is AT_UNNAMED then look specifically for an unnamed attribute.
@@ -5720,7 +5721,7 @@ int ntfs_attr_remove(struct ntfs_inode *ni, const __le32 type, __le16 *name,
  * On error, an ERR_PTR() containing the negative error code is returned.
  */
 void *ntfs_attr_readall(struct ntfs_inode *ni, const __le32 type,
-		__le16 *name, u32 name_len, s64 *data_size)
+		__le16 *name, u32 name_len, s64 *data_size, enum ntfs_attr_io_flags flags)
 {
 	struct ntfs_inode *bmp_ni;
 	struct inode *bmp_vi;
@@ -5753,7 +5754,7 @@ void *ntfs_attr_readall(struct ntfs_inode *ni, const __le32 type,
 	}
 
 	size = ntfs_inode_attr_pread(VFS_I(bmp_ni), 0, bmp_ni->data_size,
-			(u8 *)data);
+			(u8 *)data, flags);
 	if (size != bmp_ni->data_size) {
 		ntfs_error(sb, "ntfs_attr_pread failed");
 		ret = size < 0 ? ERR_PTR((int)size) : ERR_PTR(-EIO);
