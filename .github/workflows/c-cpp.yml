@@ -154,6 +154,7 @@ jobs:
         rm xfstests-exfat.tgz
         cd xfstests-exfat
         patch --batch --forward --fuzz=0 -p1 < ../../.github/patches/xfstests-growfiles-strrchr.patch
+        patch --batch --forward --fuzz=0 -p1 < ../../.github/patches/xfstests-generic-193-error-suffix.patch
         cp local.config.ntfs local.config
         echo "" >> local.config
         echo 'MOUNT_OPTIONS="-osymlink=native,native_symlink=rel"' >> local.config

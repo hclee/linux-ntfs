@@ -1,0 +1,10 @@
+diff --git a/tests/generic/193 b/tests/generic/193
+--- a/tests/generic/193
++++ b/tests/generic/193
+@@ -42,3 +42,5 @@ _filter_files()
+ {
+-	sed -e "s,$test_root,test.root,g" -e "s,$test_user,test.user,g"
++	sed -e "s,$test_root,test.root,g" -e "s,$test_user,test.user,g" \
++		-e 's/ (os error [0-9][0-9]*)$//' \
++		-e "s/^touch: setting times of 'test\.root': /touch: cannot touch 'test.root': /"
+ }
