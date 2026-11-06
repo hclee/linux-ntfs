@@ -286,7 +286,7 @@ jobs:
         sudo ./check generic/448
         sudo ./check generic/450
         sudo ./check generic/451
-        sudo ./check generic/452
+        # generic/452 is incompatible with Ubuntu 26 coreutils applet dispatch.
         sudo ./check generic/460
         sudo ./check generic/464
         sudo ./check generic/465
