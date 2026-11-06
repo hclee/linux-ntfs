@@ -1,0 +1,28 @@
+diff --git a/tests/generic/294 b/tests/generic/294
+--- a/tests/generic/294
++++ b/tests/generic/294
+@@ -27,3 +27,11 @@
+ THIS_TEST_DIR=$SCRATCH_MNT/$seq.test
+-
++
++_filter_294()
++{
++	sed -e 's,^mknod: File exists (os error 17)$,mknod: SCRATCH_MNT/294.test/testnode: File exists,' \
++	    -e "s,^mkdir: \(SCRATCH_MNT/294\.test/testdir\): File exists$,mkdir: cannot create directory '\1': File exists," \
++	    -e "s,^touch: setting times of '\(SCRATCH_MNT/294\.test/testtarget\)': Read-only file system$,touch: cannot touch '\1': Read-only file system," \
++	    -e "s,^ln: creating symbolic link '\(SCRATCH_MNT/294\.test/testlink\)': Already exists$,ln: creating symbolic link '\1': File exists,"
++}
++
+ _create_files()
+@@ -40,7 +48,7 @@ _scratch_mount
+ mkdir $THIS_TEST_DIR || _fail "Could not create dir for test"
+-
++
+-_create_files 2>&1 | _filter_scratch
++_create_files 2>&1 | _filter_scratch | _filter_294
+ _try_scratch_mount -o remount,ro || _fail "Could not remount scratch readonly"
+-_create_files 2>&1 | _filter_scratch
++_create_files 2>&1 | _filter_scratch | _filter_294
+-
++
+ # success, all done
