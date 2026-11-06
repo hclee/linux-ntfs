@@ -93,6 +93,7 @@ jobs:
         sudo apt-get install xfslibs-dev uuid-dev libtool-bin xfsprogs libgdbm-dev gawk fio attr libattr1-dev libacl1-dev libaio-dev
         sudo apt-get install libgcrypt20-dev
         git clone https://github.com/namjaejeon/exfat-testsuites
+        git -C exfat-testsuites checkout --detach 012fdd5d35ffab75da9410287e3af925d8fa8361
         git clone --branch=ntfs-next https://github.com/ntfsprogs-plus/ntfsprogs-plus
         export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
         export PATH=/usr/local/lib:$PATH
@@ -155,7 +156,8 @@ jobs:
         cp local.config.ntfs local.config
         echo "" >> local.config
         echo 'MOUNT_OPTIONS="-osymlink=native,native_symlink=rel"' >> local.config
-        make -j$((`nproc`+1)) > /dev/null
+        # The archived suite uses pre-C23 function declarations.
+        CFLAGS="-g -O2 -std=gnu17" make -j$((`nproc`+1)) > /dev/null
         echo 'FSTYP=ntfs' >> local.config
         sudo ./check generic/001
         sudo ./check generic/002
