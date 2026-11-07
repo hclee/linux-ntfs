@@ -161,7 +161,7 @@ static inline struct mft_record *map_mft_record_page(struct ntfs_inode *ni)
 
 	/* Read, map, and pin the folio. */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	folio = read_mapping_folio(mft_vi->i_mapping, index, NULL);
+	folio = ntfs_read_mapping_folio_uninterruptible(mft_vi->i_mapping, index);
 	if (!IS_ERR(folio)) {
 		u8 *addr;
 
@@ -195,7 +195,7 @@ err_out:
 	ni->folio_ofs = 0;
 	return (struct mft_record *)folio;
 #else
-	page = read_mapping_page(mft_vi->i_mapping, index, NULL);
+	page = ntfs_read_mapping_page_uninterruptible(mft_vi->i_mapping, index);
 	if (!IS_ERR(page)) {
 		ni->mrec = kmalloc(vol->mft_record_size, GFP_NOFS);
 		if (!ni->mrec) {
@@ -566,8 +566,8 @@ int ntfs_sync_mft_mirror(struct ntfs_volume *vol, const u64 mft_no,
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 	/* Get the page containing the mirror copy of the mft record @m. */
-	folio = read_mapping_folio(vol->mftmirr_ino->i_mapping,
-			NTFS_MFT_NR_TO_PIDX(vol, mft_no), NULL);
+	folio = ntfs_read_mapping_folio_uninterruptible(vol->mftmirr_ino->i_mapping,
+			NTFS_MFT_NR_TO_PIDX(vol, mft_no));
 	if (IS_ERR(folio)) {
 		ntfs_error(vol->sb, "Failed to map mft mirror page.");
 		err = PTR_ERR(folio);
@@ -586,8 +586,8 @@ int ntfs_sync_mft_mirror(struct ntfs_volume *vol, const u64 mft_no,
 #else
 
 	/* Get the page containing the mirror copy of the mft record @m. */
-	page = read_mapping_page(vol->mftmirr_ino->i_mapping, mft_no >>
-			(PAGE_SHIFT - vol->mft_record_size_bits), NULL);
+	page = ntfs_read_mapping_page_uninterruptible(vol->mftmirr_ino->i_mapping,
+			mft_no >> (PAGE_SHIFT - vol->mft_record_size_bits));
 	if (IS_ERR(page)) {
 		ntfs_error(vol->sb, "Failed to map mft mirror page.");
 		err = PTR_ERR(page);
@@ -705,8 +705,8 @@ static int ntfs_sync_mft_mirror_unit(struct ntfs_volume *vol,
 	if (unit->folio_ofs + unit->len > folio_size(source))
 		return -EIO;
 
-	mirror = read_mapping_folio(vol->mftmirr_ino->i_mapping,
-				    mirror_file_ofs >> PAGE_SHIFT, NULL);
+	mirror = ntfs_read_mapping_folio_uninterruptible(vol->mftmirr_ino->i_mapping,
+							mirror_file_ofs >> PAGE_SHIFT);
 	if (IS_ERR(mirror))
 		return PTR_ERR(mirror);
 
@@ -1455,7 +1455,7 @@ static bool mft_reserved_is_free(struct ntfs_volume *vol, struct ntfs_inode *mft
 		return false;
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	folio = read_mapping_folio(vol->mft_ino->i_mapping, index, NULL);
+	folio = ntfs_read_mapping_folio_uninterruptible(vol->mft_ino->i_mapping, index);
 	if (IS_ERR(folio))
 		goto free_m;
 
@@ -1466,7 +1466,7 @@ static bool mft_reserved_is_free(struct ntfs_volume *vol, struct ntfs_inode *mft
 	folio_unlock(folio);
 	folio_put(folio);
 #else
-	page = read_mapping_page(vol->mft_ino->i_mapping, index, NULL);
+	page = ntfs_read_mapping_page_uninterruptible(vol->mft_ino->i_mapping, index);
 	if (IS_ERR(page))
 		goto free_m;
 
@@ -1652,8 +1652,8 @@ static s64 mft_bitmap_alloc_free_rec(struct ntfs_volume *vol,
 		 */
 		if (size) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-			folio = read_mapping_folio(mftbmp_mapping,
-					ofs >> PAGE_SHIFT, NULL);
+			folio = ntfs_read_mapping_folio_uninterruptible(mftbmp_mapping,
+					ofs >> PAGE_SHIFT);
 			if (IS_ERR(folio)) {
 				ntfs_error(vol->sb, "Failed to read mft bitmap, aborting.");
 				return PTR_ERR(folio);
@@ -1661,7 +1661,8 @@ static s64 mft_bitmap_alloc_free_rec(struct ntfs_volume *vol,
 			folio_lock(folio);
 			buf = (u8 *)kmap_local_folio(folio, 0) + folio_ofs;
 #else
-			page = read_mapping_page(mftbmp_mapping, ofs >> PAGE_SHIFT, NULL);
+			page = ntfs_read_mapping_page_uninterruptible(mftbmp_mapping,
+					ofs >> PAGE_SHIFT);
 			if (IS_ERR(page)) {
 				ntfs_error(vol->sb, "Failed to read mft bitmap, aborting.");
 				return PTR_ERR(page);
@@ -1878,8 +1879,8 @@ static int ntfs_mft_bitmap_extend_allocation_nolock(struct ntfs_volume *vol)
 	 */
 	ll = lcn >> 3;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	folio = read_mapping_folio(vol->lcnbmp_ino->i_mapping,
-			ll >> PAGE_SHIFT, NULL);
+	folio = ntfs_read_mapping_folio_uninterruptible(vol->lcnbmp_ino->i_mapping,
+			ll >> PAGE_SHIFT);
 	if (IS_ERR(folio)) {
 		up_write(&mftbmp_ni->runlist.lock);
 		ntfs_error(vol->sb, "Failed to read from lcn bitmap.");
@@ -1890,8 +1891,8 @@ static int ntfs_mft_bitmap_extend_allocation_nolock(struct ntfs_volume *vol)
 	folio_lock(folio);
 	b = (u8 *)kmap_local_folio(folio, 0) + (ll & ~PAGE_MASK);
 #else
-	page = read_mapping_page(vol->lcnbmp_ino->i_mapping,
-			ll >> PAGE_SHIFT, NULL);
+	page = ntfs_read_mapping_page_uninterruptible(vol->lcnbmp_ino->i_mapping,
+			ll >> PAGE_SHIFT);
 	if (IS_ERR(page)) {
 		up_write(&mftbmp_ni->runlist.lock);
 		ntfs_error(vol->sb, "Failed to read from lcn bitmap.");
@@ -2725,7 +2726,7 @@ static int ntfs_mft_record_format(const struct ntfs_volume *vol, const s64 mft_n
 
 	/* Read, map, and pin the folio containing the mft record. */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	folio = read_mapping_folio(mft_vi->i_mapping, index, NULL);
+	folio = ntfs_read_mapping_folio_uninterruptible(mft_vi->i_mapping, index);
 	if (IS_ERR(folio)) {
 		ntfs_error(vol->sb, "Failed to map page containing mft record to format 0x%llx.",
 				(long long)mft_no);
@@ -2737,7 +2738,7 @@ static int ntfs_mft_record_format(const struct ntfs_volume *vol, const s64 mft_n
 	folio_clear_uptodate(folio);
 	m = (struct mft_record *)((u8 *)kmap_local_folio(folio, 0) + ofs);
 #else
-	page = read_mapping_page(mft_vi->i_mapping, index, NULL);
+	page = ntfs_read_mapping_page_uninterruptible(mft_vi->i_mapping, index);
 	if (IS_ERR(page)) {
 		ntfs_error(vol->sb, "Failed to map page containing mft record to format 0x%llx.",
 				(long long)mft_no);
@@ -3277,7 +3278,7 @@ mft_rec_already_initialized:
 	ofs = NTFS_MFT_NR_TO_POFS(vol, bit);
 	/* Read, map, and pin the folio containing the mft record. */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	folio = read_mapping_folio(vol->mft_ino->i_mapping, index, NULL);
+	folio = ntfs_read_mapping_folio_uninterruptible(vol->mft_ino->i_mapping, index);
 	if (IS_ERR(folio)) {
 		ntfs_error(vol->sb, "Failed to map page containing allocated mft record 0x%llx.",
 				bit);
@@ -3290,7 +3291,7 @@ mft_rec_already_initialized:
 	folio_clear_uptodate(folio);
 	m = (struct mft_record *)((u8 *)kmap_local_folio(folio, 0) + ofs);
 #else
-	page = read_mapping_page(vol->mft_ino->i_mapping, index, NULL);
+	page = ntfs_read_mapping_page_uninterruptible(vol->mft_ino->i_mapping, index);
 	if (IS_ERR(page)) {
 		ntfs_error(vol->sb, "Failed to map page containing allocated mft record 0x%llx.",
 				bit);

@@ -3728,7 +3728,8 @@ put_err_out:
 	return err;
 }
 
-s64 ntfs_inode_attr_pread(struct inode *vi, s64 pos, s64 count, u8 *buf)
+s64 ntfs_inode_attr_pread(struct inode *vi, s64 pos, s64 count, u8 *buf,
+			  enum ntfs_attr_io_flags flags)
 {
 	struct address_space *mapping = vi->i_mapping;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
@@ -3791,7 +3792,9 @@ s64 ntfs_inode_attr_pread(struct inode *vi, s64 pos, s64 count, u8 *buf)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 	do {
 		/* Update @index and get the next folio. */
-		folio = read_mapping_folio(mapping, index, NULL);
+		folio = flags & NTFS_ATTR_IO_UNINTERRUPTIBLE_READ ?
+			ntfs_read_mapping_folio_uninterruptible(mapping, index) :
+			read_mapping_folio(mapping, index, NULL);
 		if (IS_ERR(folio))
 			break;
 
@@ -3812,7 +3815,9 @@ s64 ntfs_inode_attr_pread(struct inode *vi, s64 pos, s64 count, u8 *buf)
 #else
 	do {
 		/* Update @index and get the next page. */
-		page = read_mapping_page(mapping, index, NULL);
+		page = flags & NTFS_ATTR_IO_UNINTERRUPTIBLE_READ ?
+			ntfs_read_mapping_page_uninterruptible(mapping, index) :
+			read_mapping_page(mapping, index, NULL);
 		if (IS_ERR(page))
 			break;
 		addr = page_address(page);
@@ -3974,7 +3979,7 @@ out:
 static s64 __ntfs_inode_non_resident_attr_pwrite(struct inode *vi,
 						 s64 pos, s64 count, u8 *buf,
 						 struct ntfs_attr_search_ctx *ctx,
-						 bool sync)
+						 bool sync, enum ntfs_attr_io_flags flags)
 {
 	struct ntfs_inode *ni = NTFS_I(vi);
 	struct address_space *mapping = vi->i_mapping;
@@ -3997,7 +4002,9 @@ static s64 __ntfs_inode_non_resident_attr_pwrite(struct inode *vi,
 				break;
 			}
 		} else {
-			folio = read_mapping_folio(mapping, index, NULL);
+			folio = flags & NTFS_ATTR_IO_UNINTERRUPTIBLE_READ ?
+				ntfs_read_mapping_folio_uninterruptible(mapping, index) :
+				read_mapping_folio(mapping, index, NULL);
 			if (IS_ERR(folio)) {
 				ret = PTR_ERR(folio);
 				ntfs_error(vi->i_sb, "Failed to read a page %lu for attr %#x: %ld",
@@ -4119,7 +4126,7 @@ err_unlock_folio:
 static s64 __ntfs_inode_non_resident_attr_pwrite(struct inode *vi,
 						 s64 pos, s64 count, u8 *buf,
 						 struct ntfs_attr_search_ctx *ctx,
-						 bool sync)
+						 bool sync, enum ntfs_attr_io_flags flags)
 {
 	struct ntfs_inode *ni = NTFS_I(vi);
 	struct address_space *mapping = vi->i_mapping;
@@ -4134,7 +4141,9 @@ static s64 __ntfs_inode_non_resident_attr_pwrite(struct inode *vi,
 
 	index = pos >> PAGE_SHIFT;
 	while (count) {
-		page = read_mapping_page(mapping, index, NULL);
+		page = flags & NTFS_ATTR_IO_UNINTERRUPTIBLE_READ ?
+			ntfs_read_mapping_page_uninterruptible(mapping, index) :
+			read_mapping_page(mapping, index, NULL);
 		if (IS_ERR(page)) {
 			ret = PTR_ERR(page);
 			ntfs_error(vi->i_sb, "Failed to read a page %lu for attr %#x: %ld",
@@ -4168,7 +4177,8 @@ static s64 __ntfs_inode_non_resident_attr_pwrite(struct inode *vi,
 }
 #endif
 
-s64 ntfs_inode_attr_pwrite(struct inode *vi, s64 pos, s64 count, u8 *buf, bool sync)
+s64 ntfs_inode_attr_pwrite(struct inode *vi, s64 pos, s64 count, u8 *buf,
+			   bool sync, enum ntfs_attr_io_flags flags)
 {
 	struct ntfs_inode *ni = NTFS_I(vi);
 	struct ntfs_attr_search_ctx *ctx;
@@ -4197,7 +4207,8 @@ s64 ntfs_inode_attr_pwrite(struct inode *vi, s64 pos, s64 count, u8 *buf, bool s
 		goto out;
 
 	if (NInoNonResident(ni))
-		ret = __ntfs_inode_non_resident_attr_pwrite(vi, pos, count, buf, ctx, sync);
+		ret = __ntfs_inode_non_resident_attr_pwrite(vi, pos, count, buf, ctx, sync,
+							    flags);
 	else
 		ret = __ntfs_inode_resident_attr_pwrite(vi, pos, count, buf, ctx);
 out:
@@ -4217,7 +4228,7 @@ struct folio *ntfs_get_locked_folio(struct address_space *mapping,
 
 		page_cache_sync_readahead(mapping, ra, NULL, index,
 				end_index - index);
-		folio = read_mapping_folio(mapping, index, NULL);
+		folio = ntfs_read_mapping_folio_uninterruptible(mapping, index);
 		if (!IS_ERR(folio))
 			folio_lock(folio);
 	}

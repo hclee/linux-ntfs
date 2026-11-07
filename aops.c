@@ -7,6 +7,9 @@
  * Copyright (c) 2025 LG Electronics Co., Ltd.
  */
 
+#include <linux/pagemap.h>
+#include <linux/psi.h>
+#include <linux/swap.h>
 #include <linux/writeback.h>
 
 #include "attrib.h"
@@ -14,6 +17,125 @@
 #include "ntfs.h"
 #include "debug.h"
 #include "iomap.h"
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 19, 0)
+/*
+ * FGP_LOCK retains a reference while waiting, which can delay migration and
+ * reclaim.  Restrict this helper to metadata reads.  The caller must ensure
+ * mapping lifetime and coordinate invalidation.
+ */
+struct folio *
+ntfs_read_mapping_folio_uninterruptible(struct address_space *mapping,
+					 pgoff_t index)
+{
+	struct folio *folio;
+	unsigned long pflags;
+	bool workingset;
+	int err;
+
+retry:
+	folio = filemap_get_folio(mapping, index);
+	if (IS_ERR(folio))
+		goto lock;
+	if (folio_test_uptodate(folio))
+		goto out;
+	folio_put(folio);
+
+lock:
+	folio = __filemap_get_folio(mapping, index, FGP_LOCK | FGP_CREAT,
+				    mapping_gfp_mask(mapping));
+	if (IS_ERR(folio))
+		return folio;
+	if (folio_test_uptodate(folio))
+		goto unlock;
+
+	workingset = folio_test_workingset(folio);
+	if (unlikely(workingset))
+		psi_memstall_enter(&pflags);
+	err = mapping->a_ops->read_folio(NULL, folio);
+	if (unlikely(workingset))
+		psi_memstall_leave(&pflags);
+	if (err)
+		goto error;
+
+	folio_wait_locked(folio);
+	if (folio_test_uptodate(folio))
+		goto out;
+	err = -EIO;
+error:
+	folio_put(folio);
+	if (err == AOP_TRUNCATED_PAGE)
+		goto retry;
+	return ERR_PTR(err);
+
+unlock:
+	folio_unlock(folio);
+out:
+	folio_mark_accessed(folio);
+	return folio;
+}
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
+struct page *
+ntfs_read_mapping_page_uninterruptible(struct address_space *mapping,
+					pgoff_t index)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 19, 0)
+	struct folio *folio = ntfs_read_mapping_folio_uninterruptible(mapping, index);
+
+	if (IS_ERR(folio))
+		return ERR_CAST(folio);
+	return folio_file_page(folio, index);
+#else
+	struct page *page;
+	unsigned long pflags;
+	bool workingset;
+	int err;
+
+retry:
+	page = find_get_page(mapping, index);
+	if (!page)
+		goto lock;
+	if (PageUptodate(page))
+		goto out;
+	put_page(page);
+
+lock:
+	page = pagecache_get_page(mapping, index, FGP_LOCK | FGP_CREAT,
+				  mapping_gfp_mask(mapping));
+	if (!page)
+		return ERR_PTR(-ENOMEM);
+	if (PageUptodate(page))
+		goto unlock;
+
+	workingset = PageWorkingset(page);
+	if (unlikely(workingset))
+		psi_memstall_enter(&pflags);
+	err = mapping->a_ops->readpage(NULL, page);
+	if (unlikely(workingset))
+		psi_memstall_leave(&pflags);
+	if (err)
+		goto error;
+
+	wait_on_page_locked(page);
+	if (PageUptodate(page))
+		goto out;
+	err = -EIO;
+error:
+	put_page(page);
+	if (err == AOP_TRUNCATED_PAGE)
+		goto retry;
+	return ERR_PTR(err);
+
+unlock:
+	unlock_page(page);
+out:
+	mark_page_accessed(page);
+	return page;
+#endif
+}
+#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
 static void ntfs_iomap_read_end_io(struct bio *bio)

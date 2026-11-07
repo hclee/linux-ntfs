@@ -134,7 +134,7 @@ char *ntfs_attr_name_get(const struct ntfs_volume *vol, const __le16 *uname,
 		const int uname_len);
 void ntfs_attr_name_free(unsigned char **name);
 void *ntfs_attr_readall(struct ntfs_inode *ni, const __le32 type,
-		__le16 *name, u32 name_len, s64 *data_size);
+		__le16 *name, u32 name_len, s64 *data_size, enum ntfs_attr_io_flags flags);
 int ntfs_resident_attr_record_add(struct ntfs_inode *ni, __le32 type,
 		__le16 *name, u8 name_len, u8 *val, u32 size,
 		__le16 flags);

@@ -107,7 +107,7 @@ static int remove_object_id_index(struct ntfs_inode *ni, struct ntfs_index_conte
 
 	/* read the existing object id attribute */
 	size = ntfs_inode_attr_pread(VFS_I(ni), 0, sizeof(struct guid),
-				     (char *)&key);
+				     (char *)&key, NTFS_ATTR_IO_UNINTERRUPTIBLE_READ);
 	if (size != sizeof(struct guid))
 		return -ENODATA;
 

@@ -108,8 +108,9 @@ static int ntfs_ib_write(struct ntfs_index_context *icx, struct index_block *ib)
 		return -EIO;
 
 	ret = ntfs_inode_attr_pwrite(VFS_I(icx->ia_ni),
-			ntfs_ib_vcn_to_pos(icx, vcn), icx->block_size,
-			(u8 *)ib, icx->sync_write);
+				     ntfs_ib_vcn_to_pos(icx, vcn), icx->block_size,
+				     (u8 *)ib, icx->sync_write,
+				     NTFS_ATTR_IO_UNINTERRUPTIBLE_READ);
 
 	/* Perform data restoration before returning */
 	post_write_mst_fixup((struct ntfs_record *)ib);
@@ -752,7 +753,8 @@ static int ntfs_ib_read(struct ntfs_index_context *icx, s64 vcn, struct index_bl
 
 	pos = ntfs_ib_vcn_to_pos(icx, vcn);
 
-	ret = ntfs_inode_attr_pread(VFS_I(icx->ia_ni), pos, icx->block_size, (u8 *)dst);
+	ret = ntfs_inode_attr_pread(VFS_I(icx->ia_ni), pos, icx->block_size,
+				    (u8 *)dst, NTFS_ATTR_IO_UNINTERRUPTIBLE_READ);
 	if (ret != icx->block_size) {
 		if (ret == -1)
 			ntfs_error(icx->idx_ni->vol->sb, "Failed to read index block");
@@ -1065,7 +1067,8 @@ static int ntfs_ibm_modify(struct ntfs_index_context *icx, s64 vcn, int set)
 		}
 	}
 
-	if (ntfs_inode_attr_pread(bmp_vi, bpos, 1, &byte) != 1) {
+	if (ntfs_inode_attr_pread(bmp_vi, bpos, 1, &byte,
+				  NTFS_ATTR_IO_UNINTERRUPTIBLE_READ) != 1) {
 		ret = -EIO;
 		ntfs_error(icx->idx_ni->vol->sb, "Failed to read $BITMAP");
 		goto err;
@@ -1076,7 +1079,8 @@ static int ntfs_ibm_modify(struct ntfs_index_context *icx, s64 vcn, int set)
 	else
 		byte &= ~bit;
 
-	if (ntfs_inode_attr_pwrite(bmp_vi, bpos, 1, &byte, false) != 1) {
+	if (ntfs_inode_attr_pwrite(bmp_vi, bpos, 1, &byte, false,
+				   NTFS_ATTR_IO_UNINTERRUPTIBLE_READ) != 1) {
 		ret = -EIO;
 		ntfs_error(icx->idx_ni->vol->sb, "Failed to write $Bitmap");
 		goto err;
@@ -1107,7 +1111,7 @@ static s64 ntfs_ibm_get_free(struct ntfs_index_context *icx)
 	ntfs_debug("Entering\n");
 
 	bm = ntfs_attr_readall(icx->idx_ni, AT_BITMAP,  icx->name, icx->name_len,
-			&size);
+			&size, NTFS_ATTR_IO_UNINTERRUPTIBLE_READ);
 	if (IS_ERR(bm))
 		return PTR_ERR(bm);
 

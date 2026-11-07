@@ -1126,7 +1126,8 @@ int load_attribute_list(struct ntfs_inode *base_ni, u8 *al_start, const s64 size
 		return PTR_ERR(attr_vi);
 	}
 
-	if (ntfs_inode_attr_pread(attr_vi, 0, size, al_start) != size) {
+	if (ntfs_inode_attr_pread(attr_vi, 0, size, al_start,
+				  NTFS_ATTR_IO_UNINTERRUPTIBLE_READ) != size) {
 		iput(attr_vi);
 		ntfs_error(base_ni->vol->sb,
 			   "Failed to read attribute list, mft = %llu",
@@ -2374,7 +2375,7 @@ err_out:
 }
 
 /*
- * ntfs_attr_set - fill (a part of) an attribute with a byte
+ * ntfs_attr_set - fill (a part of) a metadata attribute with a byte
  * @ni:		ntfs inode describing the attribute to fill
  * @ofs:	offset inside the attribute at which to start to fill
  * @cnt:	number of bytes to fill
@@ -2394,6 +2395,9 @@ int ntfs_attr_set(struct ntfs_inode *ni, s64 ofs, s64 cnt, const u8 val)
 {
 	struct address_space *mapping = VFS_I(ni)->i_mapping;
 	struct folio *folio;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
+	struct page *page;
+#endif
 	pgoff_t index;
 	u8 *addr;
 	unsigned long offset;
@@ -2402,7 +2406,12 @@ int ntfs_attr_set(struct ntfs_inode *ni, s64 ofs, s64 cnt, const u8 val)
 
 	index = ofs >> PAGE_SHIFT;
 	while (cnt) {
-		folio = read_mapping_folio(mapping, index, NULL);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 19, 0)
+		folio = ntfs_read_mapping_folio_uninterruptible(mapping, index);
+#else
+		page = ntfs_read_mapping_page_uninterruptible(mapping, index);
+		folio = IS_ERR(page) ? ERR_CAST(page) : page_folio(page);
+#endif
 		if (IS_ERR(folio)) {
 			ret = PTR_ERR(folio);
 			ntfs_error(VFS_I(ni)->i_sb, "Failed to read a page %lu for attr %#x: %ld",
@@ -2463,7 +2472,7 @@ int ntfs_attr_set(struct ntfs_inode *ni, const s64 ofs, const s64 cnt, const u8 
 	end >>= PAGE_SHIFT;
 	/* If there is a first partial page, need to do it the slow way. */
 	if (start_ofs) {
-		page = read_mapping_page(mapping, idx, NULL);
+		page = ntfs_read_mapping_page_uninterruptible(mapping, idx);
 		if (IS_ERR(page)) {
 			ntfs_error(vol->sb,
 				"Failed to read first partial page (error, index 0x%lx).",
@@ -2519,7 +2528,7 @@ int ntfs_attr_set(struct ntfs_inode *ni, const s64 ofs, const s64 cnt, const u8 
 	}
 	/* If there is a last partial page, need to do it the slow way. */
 	if (end_ofs) {
-		page = read_mapping_page(mapping, idx, NULL);
+		page = ntfs_read_mapping_page_uninterruptible(mapping, idx);
 		if (IS_ERR(page)) {
 			ntfs_error(vol->sb,
 				"Failed to read last partial page (error, index 0x%lx).",
@@ -3195,7 +3204,7 @@ add_non_resident:
 
 	/* Resize and set attribute value. */
 	if (ntfs_attr_truncate(attr_ni, size) ||
-		(val && (ntfs_inode_attr_pwrite(attr_vi, 0, size, val, false) != size))) {
+		(val && (ntfs_inode_attr_pwrite(attr_vi, 0, size, val, false, 0) != size))) {
 		err = -EIO;
 		ntfs_error(sb, "Failed to initialize just added attribute");
 		if (ntfs_attr_rm(attr_ni))
@@ -5708,6 +5717,7 @@ int ntfs_attr_remove(struct ntfs_inode *ni, const __le32 type, __le16 *name,
  * @name:	attribute name in little endian Unicode or AT_UNNAMED or NULL
  * @name_len:	length of attribute @name in Unicode characters (if @name given)
  * @data_size:	if non-NULL then store here the data size
+ * @flags:	attribute I/O flags
  *
  * This function will read the entire content of an ntfs attribute.
  * If @name is AT_UNNAMED then look specifically for an unnamed attribute.
@@ -5720,7 +5730,7 @@ int ntfs_attr_remove(struct ntfs_inode *ni, const __le32 type, __le16 *name,
  * On error, an ERR_PTR() containing the negative error code is returned.
  */
 void *ntfs_attr_readall(struct ntfs_inode *ni, const __le32 type,
-		__le16 *name, u32 name_len, s64 *data_size)
+		__le16 *name, u32 name_len, s64 *data_size, enum ntfs_attr_io_flags flags)
 {
 	struct ntfs_inode *bmp_ni;
 	struct inode *bmp_vi;
@@ -5753,7 +5763,7 @@ void *ntfs_attr_readall(struct ntfs_inode *ni, const __le32 type,
 	}
 
 	size = ntfs_inode_attr_pread(VFS_I(bmp_ni), 0, bmp_ni->data_size,
-			(u8 *)data);
+			(u8 *)data, flags);
 	if (size != bmp_ni->data_size) {
 		ntfs_error(sb, "ntfs_attr_pread failed");
 		ret = size < 0 ? ERR_PTR((int)size) : ERR_PTR(-EIO);

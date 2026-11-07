@@ -30,7 +30,8 @@ static int ntfs_write_ea(struct ntfs_inode *ni, __le32 type, char *value, s64 ea
 	if (IS_ERR(ea_vi))
 		return PTR_ERR(ea_vi);
 
-	written = ntfs_inode_attr_pwrite(ea_vi, ea_off, ea_size, value, false);
+	written = ntfs_inode_attr_pwrite(ea_vi, ea_off, ea_size, value, false,
+					 NTFS_ATTR_IO_UNINTERRUPTIBLE_READ);
 	if (written != ea_size)
 		err = -EIO;
 	else {
@@ -121,7 +122,7 @@ static int ntfs_get_ea(struct inode *inode, const char *name, size_t name_len,
 		return -ENODATA;
 
 	p_ea_info = ntfs_attr_readall(ni, AT_EA_INFORMATION, NULL, 0,
-			&ea_info_size);
+			&ea_info_size, 0);
 	if (IS_ERR(p_ea_info))
 		return PTR_ERR(p_ea_info);
 	if (ea_info_size != sizeof(struct ea_information)) {
@@ -132,7 +133,7 @@ static int ntfs_get_ea(struct inode *inode, const char *name, size_t name_len,
 	ea_info_qlen = le32_to_cpu(p_ea_info->ea_query_length);
 	kvfree(p_ea_info);
 
-	ea_buf = ntfs_attr_readall(ni, AT_EA, NULL, 0, &all_ea_size);
+	ea_buf = ntfs_attr_readall(ni, AT_EA, NULL, 0, &all_ea_size, 0);
 	if (IS_ERR(ea_buf))
 		return PTR_ERR(ea_buf);
 
@@ -209,7 +210,7 @@ static int ntfs_set_ea(struct inode *inode, const char *name, size_t name_len,
 
 	if (ntfs_attr_exist(ni, AT_EA_INFORMATION, AT_UNNAMED, 0)) {
 		p_ea_info = ntfs_attr_readall(ni, AT_EA_INFORMATION, NULL, 0,
-						&ea_info_size);
+						&ea_info_size, 0);
 		if (IS_ERR(p_ea_info)) {
 			err = PTR_ERR(p_ea_info);
 			p_ea_info = NULL;
@@ -220,7 +221,7 @@ static int ntfs_set_ea(struct inode *inode, const char *name, size_t name_len,
 			goto out;
 		}
 
-		ea_buf = ntfs_attr_readall(ni, AT_EA, NULL, 0, &all_ea_size);
+		ea_buf = ntfs_attr_readall(ni, AT_EA, NULL, 0, &all_ea_size, 0);
 		if (IS_ERR(ea_buf)) {
 			err = PTR_ERR(ea_buf);
 			ea_buf = NULL;
@@ -543,7 +544,7 @@ ssize_t ntfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 
 	mutex_lock(&NTFS_I(inode)->mrec_lock);
 	ea_info = ntfs_attr_readall(ni, AT_EA_INFORMATION, NULL, 0,
-			&ea_info_size);
+			&ea_info_size, 0);
 	if (IS_ERR(ea_info)) {
 		err = PTR_ERR(ea_info);
 		ea_info = NULL;
@@ -556,7 +557,7 @@ ssize_t ntfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 
 	ea_info_qsize = le32_to_cpu(ea_info->ea_query_length);
 
-	ea_buf = ntfs_attr_readall(ni, AT_EA, NULL, 0, &ea_buf_size);
+	ea_buf = ntfs_attr_readall(ni, AT_EA, NULL, 0, &ea_buf_size, 0);
 	if (IS_ERR(ea_buf)) {
 		err = PTR_ERR(ea_buf);
 		ea_buf = NULL;

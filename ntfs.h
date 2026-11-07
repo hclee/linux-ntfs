@@ -177,6 +177,17 @@ extern struct kmem_cache *ntfs_index_ctx_cache;
 extern const struct address_space_operations ntfs_aops;
 extern const struct address_space_operations ntfs_mft_aops;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 19, 0)
+struct folio *
+ntfs_read_mapping_folio_uninterruptible(struct address_space *mapping,
+					 pgoff_t index);
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
+struct page *
+ntfs_read_mapping_page_uninterruptible(struct address_space *mapping,
+					pgoff_t index);
+#endif
+
 extern const struct  file_operations ntfs_file_ops;
 extern const struct inode_operations ntfs_file_inode_ops;
 extern const  struct inode_operations ntfs_symlink_inode_operations;
