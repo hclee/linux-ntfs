@@ -1440,6 +1440,10 @@ static int check_windows_hibernation_status(struct ntfs_volume *vol)
 	mref = ntfs_lookup_inode_by_name(NTFS_I(vol->root_ino), hiberfil, 12,
 			&name);
 	inode_unlock(vol->root_ino);
+	if (!IS_ERR_MREF(mref) && name) {
+		kfree(name);
+		return 0;
+	}
 	kfree(name);
 	if (IS_ERR_MREF(mref)) {
 		ret = MREF_ERR(mref);
